@@ -2982,3 +2982,168 @@ A red X if the child is already connected (tapping removes the connection).
 Connections appear as curved lines on the canvas between a parent node and its child node.
 Parent color updates automatically if the child belongs to that parent (i.e., the child’s parentID matches the parent’s id).
 Feel free to tweak the user interface and color mixing logic as desired. This code should fulfill the functionality you requested. Enjoy building your “fun2do” app!
+
+look at the image uploaded. lines wrong located relative to the nodes on the circles. here's code snippet: please fix it.  I believe issue in ConnectionView because ConnectionDotView works pretty fine and dots located at the edges of those circles (e.g., nodes). so you may fix ConnectionView that connects nodes with each other accordingly ConnectionDotView logic.
+
+
+
+<code_snippet>
+import SwiftUI
+
+struct ConnectionDotView: View { 
+    var node: Node 
+    // The dot’s position relative to the node’s top-left corner. 
+    var dotPosition: CGPoint 
+    var dotType: DotPosition
+    var onDragEnded: ((UUID, CGPoint, DotPosition) -> Void)? = nil
+    var body: some View {
+        Circle()
+            .fill(Color.white)
+            .frame(width: 10, height: 10)
+            .position(dotPosition)
+            .gesture(
+                DragGesture()
+                    .onEnded { value in
+                        // Calculate the dot’s center in global coordinates.
+                        let nodeCenterOffset = CGPoint(x: node.position.x, y: node.position.y)
+                        let dotCenter = CGPoint(x: nodeCenterOffset.x + dotPosition.x, y: nodeCenterOffset.y + dotPosition.y)
+                        let endPoint = CGPoint(x: dotCenter.x + value.translation.width,
+                                               y: dotCenter.y + value.translation.height)
+                        onDragEnded?(node.id, endPoint, dotType)
+                    }
+            )
+    }
+}
+-----
+import SwiftUI
+
+struct ConnectionView: View { 
+    var from: CGPoint 
+    var to: CGPoint
+    var body: some View {
+        Path { path in
+            path.move(to: from)
+            // Now compute the control point based on the actual endpoints.
+            // (You can tweak this calculation as needed for a pleasing curve.)
+            let control = CGPoint(x: (from.x + to.x) / 2, y: (from.y + to.y) / 2)
+            path.addQuadCurve(to: to, control: control)
+        }
+        .stroke(Color.gray, lineWidth: 2)
+    }
+}
+</code_snippet>
+Reasoned for 44 seconds
+Below is an example of how to ensure the ConnectionView lines originate and terminate at exactly the same coordinates as the ConnectionDotView dots. The key is to use the same offset logic for both drawing the dots and drawing the connection lines. In other words, wherever you compute the dot’s position (in ConnectionDotView), you must also compute that position when rendering the line.
+
+1. Create a Helper to Get a Dot’s Global Position
+
+First, define a function that calculates the global position of a dot, based on:
+
+The node’s (x, y) position
+The node’s size (e.g. 120 for parents, 80 for children)
+Which dot side (top, bottom, left, right)
+For example:
+
+enum DotPosition {
+    case top, bottom, left, right
+}
+
+func dotOffset(for nodeType: NodeType, dot: DotPosition) -> CGPoint {
+    // Node size depends on whether it's a parent or child.
+    let size: CGFloat = (nodeType == .parent) ? 120 : 80
+    
+    switch dot {
+    case .top:
+        return CGPoint(x: size / 2, y: 0)
+    case .bottom:
+        return CGPoint(x: size / 2, y: size)
+    case .left:
+        return CGPoint(x: 0, y: size / 2)
+    case .right:
+        return CGPoint(x: size, y: size / 2)
+    }
+}
+
+/// Returns the absolute (global) position of a dot on a node's circle.
+func dotGlobalPosition(node: Node, dot: DotPosition) -> CGPoint {
+    // The node's top-left corner is (node.position.x, node.position.y).
+    // Then we add the dotOffset for that node's type & dot side.
+    let offset = dotOffset(for: node.type, dot: dot)
+    return CGPoint(x: node.position.x + offset.x,
+                   y: node.position.y + offset.y)
+}
+2. Use That Same Helper in ConnectionDotView
+
+If you already have logic in ConnectionDotView that sets the drag end location to:
+
+let nodeCenterOffset = CGPoint(x: node.position.x, y: node.position.y)
+let dotCenter = CGPoint(x: nodeCenterOffset.x + dotPosition.x,
+                        y: nodeCenterOffset.y + dotPosition.y)
+…then replace that with a call to dotGlobalPosition(node: node, dot: dotType) to ensure consistency. For instance:
+
+struct ConnectionDotView: View {
+    var node: Node
+    var dotPosition: CGPoint
+    var dotType: DotPosition
+    var onDragEnded: ((UUID, CGPoint, DotPosition) -> Void)? = nil
+    
+    var body: some View {
+        Circle()
+            .fill(Color.white)
+            .frame(width: 10, height: 10)
+            .position(dotPosition)
+            .gesture(
+                DragGesture()
+                    .onEnded { value in
+                        // The dot's global position BEFORE dragging:
+                        let initialDotGlobal = dotGlobalPosition(node: node, dot: dotType)
+                        // Then add the user's drag translation:
+                        let endPoint = CGPoint(x: initialDotGlobal.x + value.translation.width,
+                                               y: initialDotGlobal.y + value.translation.height)
+                        onDragEnded?(node.id, endPoint, dotType)
+                    }
+            )
+    }
+}
+Notice we’re using dotGlobalPosition(node: node, dot: dotType) to get the starting location of the dot.
+
+3. Use the Same Helper in ConnectionView (or Where You Compute from and to)
+
+Wherever you create a ConnectionView(from: ..., to: ...), ensure you pass in the exact global coordinates of the dot. For example, if your connection data structure stores which dot was used, do:
+
+// Suppose your connection struct also has `fromDot` and `toDot`.
+struct Connection {
+    let id = UUID()
+    let fromNodeID: UUID
+    let toNodeID: UUID
+    let fromDot: DotPosition
+    let toDot: DotPosition
+    // ...
+}
+
+// In your main view, when rendering lines:
+if let fromNode = nodes.first(where: { $0.id == connection.fromNodeID }),
+   let toNode   = nodes.first(where: { $0.id == connection.toNodeID }) {
+    let fromPoint = dotGlobalPosition(node: fromNode, dot: connection.fromDot)
+    let toPoint   = dotGlobalPosition(node: toNode,   dot: connection.toDot)
+    
+    ConnectionView(from: fromPoint, to: toPoint)
+}
+This ensures the line’s from and to points match the exact positions of the dots.
+
+4. Remove Any Extra “Center Offsets”
+
+Sometimes developers do an additional + (node.type == .parent ? 60 : 40) in the connection code. Remove that if you’re already computing the offsets in dotGlobalPosition. Otherwise, you’ll end up with lines that are shifted away from the dots.
+
+5. Verify Consistency
+
+The node circle is drawn at (node.position.x, node.position.y).
+The dot is drawn inside that circle at (dotPosition.x, dotPosition.y) relative to the top-left corner of the circle.
+When you want the global coordinates, you do: node.position + dotOffset(...).
+By consistently calling dotGlobalPosition for both the dot’s drag logic and the line endpoints, you’ll get perfect alignment between the dot and the connection lines.
+
+Summary
+Unify your logic for dot positions: a single helper function calculates the dot’s global location.
+Use that helper in both ConnectionDotView (when finishing a drag) and in your code that draws ConnectionView.
+Remove any duplicate offset calculations that might cause double‐shifting.
+After these changes, the lines should originate exactly where the dots are, matching what you see on screen.
