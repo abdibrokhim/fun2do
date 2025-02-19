@@ -5,7 +5,7 @@ struct NodeView: View {
     // Callback for when a parent node is tapped. 
     var onSelect: (() -> Void)? = nil 
     // Callback for when a connection gesture ends: (source node id, end point) 
-    var onConnectionDragEnded: ((UUID, CGPoint) -> Void)? = nil 
+    var onConnectionDragEnded: ((UUID, CGPoint, DotPosition) -> Void)? = nil 
     @State private var dragOffset: CGSize = .zero
     @State private var showConnectionDots = false
     
@@ -31,13 +31,13 @@ struct NodeView: View {
             Group {
                 if showConnectionDots {
                     // Top dot
-                    ConnectionDotView(node: node, dotPosition: CGPoint(x: size/2, y: 0), onDragEnded: onConnectionDragEnded)
+                    ConnectionDotView(node: node, dotPosition: CGPoint(x: size/2, y: 0), dotType: .top, onDragEnded: onConnectionDragEnded)
                     // Bottom dot
-                    ConnectionDotView(node: node, dotPosition: CGPoint(x: size/2, y: size), onDragEnded: onConnectionDragEnded)
+                    ConnectionDotView(node: node, dotPosition: CGPoint(x: size/2, y: size), dotType: .bottom, onDragEnded: onConnectionDragEnded)
                     // Left dot
-                    ConnectionDotView(node: node, dotPosition: CGPoint(x: 0, y: size/2), onDragEnded: onConnectionDragEnded)
+                    ConnectionDotView(node: node, dotPosition: CGPoint(x: 0, y: size/2), dotType: .left, onDragEnded: onConnectionDragEnded)
                     // Right dot
-                    ConnectionDotView(node: node, dotPosition: CGPoint(x: size, y: size/2), onDragEnded: onConnectionDragEnded)
+                    ConnectionDotView(node: node, dotPosition: CGPoint(x: size, y: size/2), dotType: .right, onDragEnded: onConnectionDragEnded)
                 }
             }
         )
@@ -69,12 +69,6 @@ struct NodeView: View {
                 .onEnded { _ in
                     withAnimation { showConnectionDots.toggle() }
                 }
-        )
-        // If this node is a selected parent, add a highlight border.
-        .overlay(
-            RoundedRectangle(cornerRadius: size/2)
-                .stroke(Color.yellow, lineWidth: 3)
-                .opacity( (node.type == .parent && showConnectionDots) ? 1 : 0)
         )
     }
 }

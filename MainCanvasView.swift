@@ -17,24 +17,19 @@ struct MainCanvasView: View {
         ZStack {
             Color(UIColor.systemGray6)
                 .edgesIgnoringSafeArea(.all)
-            // Using double-tap as a placeholder for multi-touch.
+            // Using double-tap as a placeholder.
                 .onTapGesture(count: 2) {
                     withAnimation { showDropdown.toggle() }
                 }
             
             // Render connection curves.
             ForEach(connections) { connection in
-                if let sourceNode = nodes.first(where: { $0.id == connection.from }),
-                   let targetNode = nodes.first(where: { $0.id == connection.to }) {
-                    
-                    let sourceOffset = dotOffset(for: sourceNode.type, dot: connection.fromDot)
-                    let targetOffset = dotOffset(for: targetNode.type, dot: connection.toDot)
-                    let fromPoint = CGPoint(x: sourceNode.position.x + sourceOffset.x,
-                                            y: sourceNode.position.y + sourceOffset.y)
-                    let toPoint = CGPoint(x: targetNode.position.x + targetOffset.x,
-                                          y: targetNode.position.y + targetOffset.y)
-                    
-                    ConnectionView(from: fromPoint, to: toPoint)
+                    if let fromNode = nodes.first(where: { $0.id == connection.from }),
+                       let toNode   = nodes.first(where: { $0.id == connection.to }) {
+                        let fromPoint = dotGlobalPosition(node: fromNode, dot: connection.fromDot)
+                        let toPoint   = dotGlobalPosition(node: toNode,   dot: connection.toDot)
+                        
+                        ConnectionView(from: fromPoint, to: toPoint)
                 }
             }
             
@@ -49,7 +44,7 @@ struct MainCanvasView: View {
                 })
             }
             
-            // Dropdown menu overlay.
+            // Dropdown overlay.
             if showDropdown {
                 VStack {
                     Spacer()
@@ -111,10 +106,14 @@ struct MainCanvasView: View {
         }
         // Alerts.
         .alert(isPresented: $showNoParentAlert) {
-            Alert(title: Text("No Parent Selected"), message: Text("Please select a parent node by tapping it before creating a child node."), dismissButton: .default(Text("OK")))
+            Alert(title: Text("No Parent Selected"),
+                  message: Text("Please select a parent node by tapping it before creating a child node."),
+                  dismissButton: .default(Text("OK")))
         }
         .alert(isPresented: $showMaxChildAlert) {
-            Alert(title: Text("Max Child Nodes Reached"), message: Text("A parent node can have a maximum of 8 child nodes."), dismissButton: .default(Text("OK")))
+            Alert(title: Text("Max Child Nodes Reached"),
+                  message: Text("A parent node can have a maximum of 8 child nodes."),
+                  dismissButton: .default(Text("OK")))
         }
         .onAppear {
             if !nodes.contains(where: { $0.type == .genesis }) {
@@ -127,7 +126,7 @@ struct MainCanvasView: View {
         }
     }
     
-    // Updated connection drag handler that now receives the source dot type.
+    // Updated connection drag handler that now receives a DotPosition.
     func handleConnectionDragEnd(from sourceID: UUID, at endPoint: CGPoint, sourceDot: DotPosition) {
         var closestTarget: (node: Node, dot: DotPosition, distance: CGFloat)? = nil
         for target in nodes {

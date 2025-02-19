@@ -28,13 +28,27 @@ func mixColors(colors: [UIColor]) -> UIColor {
     return UIColor(red: totalR/count, green: totalG/count, blue: totalB/count, alpha: totalA/count) 
 }
 
-func dotOffset(for nodeType: NodeType, dot: DotPosition) -> CGPoint { 
-    // Define node size based on type. 
-    let size: CGFloat = (nodeType == .parent) ? 120 : 80 
-    switch dot { 
-        case .top: return CGPoint(x: size/2, y: 0) 
-        case .bottom: return CGPoint(x: size/2, y: size) 
-        case .left: return CGPoint(x: 0, y: size/2) 
-        case .right: return CGPoint(x: size, y: size/2) 
-    } 
+func dotOffset(for nodeType: NodeType, dot: DotPosition) -> CGPoint {
+    // Node size depends on whether it's a parent or child.
+    let size: CGFloat = (nodeType == .parent) ? 120 : 80
+    
+    switch dot {
+    case .top:
+        return CGPoint(x: size / 2, y: 0)
+    case .bottom:
+        return CGPoint(x: size / 2, y: size)
+    case .left:
+        return CGPoint(x: 0, y: size / 2)
+    case .right:
+        return CGPoint(x: size, y: size / 2)
+    }
+}
+
+/// Returns the absolute (global) position of a dot on a node's circle.
+func dotGlobalPosition(node: Node, dot: DotPosition) -> CGPoint {
+    // The node's top-left corner is (node.position.x, node.position.y).
+    // Then we add the dotOffset for that node's type & dot side.
+    let offset = dotOffset(for: node.type, dot: dot)
+    return CGPoint(x: node.position.x + offset.x,
+                   y: node.position.y + offset.y)
 }
