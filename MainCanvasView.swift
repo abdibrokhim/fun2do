@@ -3,6 +3,7 @@ import SwiftUI
 struct MainCanvasView: View { 
     @State private var nodes: [Node] = [] 
     @State private var connections: [Connection] = []
+    
     // Dropdown and modal control.
     @State private var showDropdown = false
     @State private var showParentModal = false
@@ -24,12 +25,13 @@ struct MainCanvasView: View {
             
             // Render connection curves.
             ForEach(connections) { connection in
-                    if let fromNode = nodes.first(where: { $0.id == connection.from }),
-                       let toNode   = nodes.first(where: { $0.id == connection.to }) {
-                        let fromPoint = dotGlobalPosition(node: fromNode, dot: connection.fromDot)
-                        let toPoint   = dotGlobalPosition(node: toNode,   dot: connection.toDot)
-                        
-                        ConnectionView(from: fromPoint, to: toPoint)
+                if let fromNode = nodes.first(where: { $0.id == connection.from }),
+                   let toNode = nodes.first(where: { $0.id == connection.to }) {
+                    
+                    let fromPoint = globalDotPosition(node: fromNode, dot: connection.fromDot)
+                    let toPoint   = globalDotPosition(node: toNode,   dot: connection.toDot)
+                    
+                    ConnectionView(from: fromPoint, to: toPoint)
                 }
             }
             
@@ -127,31 +129,47 @@ struct MainCanvasView: View {
     }
     
     // Updated connection drag handler that now receives a DotPosition.
-    func handleConnectionDragEnd(from sourceID: UUID, at endPoint: CGPoint, sourceDot: DotPosition) {
+    func handleConnectionDragEnd(
+        from sourceID: UUID,
+        at endPoint: CGPoint,
+        sourceDot: DotPosition
+    ) {
         var closestTarget: (node: Node, dot: DotPosition, distance: CGFloat)? = nil
+        
         for target in nodes {
             if target.id == sourceID { continue }
             for dot in [DotPosition.top, .bottom, .left, .right] {
-                let offset = dotOffset(for: target.type, dot: dot)
-                let targetDotGlobal = CGPoint(x: target.position.x + offset.x,
-                                              y: target.position.y + offset.y)
+                // Compute the global dot position for the target node.
+                let targetDotGlobal = globalDotPosition(node: target, dot: dot)
                 let dx = targetDotGlobal.x - endPoint.x
                 let dy = targetDotGlobal.y - endPoint.y
-                let distance = sqrt(dx*dx + dy*dy)
-                if distance < 30 {
+                let dist = sqrt(dx*dx + dy*dy)
+                if dist < 30 {
                     if let current = closestTarget {
-                        if distance < current.distance {
-                            closestTarget = (target, dot, distance)
+                        if dist < current.distance {
+                            closestTarget = (target, dot, dist)
                         }
                     } else {
-                        closestTarget = (target, dot, distance)
+                        closestTarget = (target, dot, dist)
                     }
                 }
             }
         }
+        
         if let targetInfo = closestTarget {
-            if !connections.contains(where: { $0.from == sourceID && $0.to == targetInfo.node.id }) {
-                connections.append(Connection(from: sourceID, to: targetInfo.node.id, fromDot: sourceDot, toDot: targetInfo.dot))
+            // Check for duplicate connections (regardless of dot positions)
+            let duplicateExists = connections.contains { conn in
+                (conn.from == sourceID && conn.to == targetInfo.node.id) ||
+                (conn.from == targetInfo.node.id && conn.to == sourceID)
+            }
+            
+            if !duplicateExists {
+                connections.append(
+                    Connection(from: sourceID,
+                               to: targetInfo.node.id,
+                               fromDot: sourceDot,
+                               toDot: targetInfo.dot)
+                )
             }
         }
     }

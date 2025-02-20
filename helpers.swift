@@ -52,3 +52,27 @@ func dotGlobalPosition(node: Node, dot: DotPosition) -> CGPoint {
     return CGPoint(x: node.position.x + offset.x,
                    y: node.position.y + offset.y)
 }
+
+/// Given the node type and a dot side, returns the offset (in points)
+/// from the node’s center to that dot.
+func localDotOffset(nodeType: NodeType, dot: DotPosition) -> CGPoint {
+    // Use the same size as the node’s drawn diameter.
+    let size: CGFloat = (nodeType == .parent) ? 120 : 80
+    switch dot {
+    case .top:
+        return CGPoint(x: 0, y: -size/2)
+    case .bottom:
+        return CGPoint(x: 0, y: size/2)
+    case .left:
+        return CGPoint(x: -size/2, y: 0)
+    case .right:
+        return CGPoint(x: size/2, y: 0)
+    }
+}
+
+/// Computes the global (screen) position of a dot on the node.
+/// Since node.position is the CENTER of the node, we add the local offset.
+func globalDotPosition(node: Node, dot: DotPosition) -> CGPoint {
+    let offset = localDotOffset(nodeType: node.type, dot: dot)
+    return CGPoint(x: node.position.x + offset.x, y: node.position.y + offset.y)
+}
