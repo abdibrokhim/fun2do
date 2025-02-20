@@ -5,7 +5,9 @@ struct OnboardingView: View {
     var body: some View {
         Group {
             if showMain {
-                MainCanvasView()
+                ZoomableView {
+                    MainCanvasView()
+                }
             } else {
                 VStack(spacing: 20) {
                     Text("Welcome to fun2do!")

@@ -7,12 +7,14 @@ struct NodeView: View {
     var onSelect: (() -> Void)? = nil
     // Callback for when a connection gesture ends.
     var onConnectionDragEnded: ((UUID, CGPoint, DotPosition) -> Void)? = nil
+    var onDoubleTap: ((Node) -> Void)? = nil  // Detail editing
+    
     @State private var dragOffset: CGSize = .zero
     @State private var showConnectionDots = false
     
     // Node size: 120 for parent; 80 for others.
     var size: CGFloat {
-        node.type == .parent ? 120 : 80
+        (node.type == .genesis) ? 160 : (node.type == .parent) ? 120 : 80
     }
     
     var body: some View {
@@ -21,7 +23,7 @@ struct NodeView: View {
                 .fill(Color(node.color))
                 .frame(width: size, height: size)
             Text(node.title)
-                .foregroundColor(.white)
+                .foregroundColor(contrastingColor(for: node.color))
                 .font(node.type == .parent ? .headline : .subheadline)
         }
         .overlay(
@@ -54,6 +56,10 @@ struct NodeView: View {
                 }
             }
         )
+        .onTapGesture(count: 2) {
+            // Double tap: show editable detail modal.
+            onDoubleTap?(node)
+        }
         .gesture(
             LongPressGesture(minimumDuration: 1)
                 .onEnded { _ in

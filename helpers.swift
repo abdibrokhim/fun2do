@@ -1,33 +1,5 @@
 import SwiftUI
 
-func mixColors(colors: [UIColor]) -> UIColor { 
-    guard !colors.isEmpty 
-    else { 
-        return UIColor.blue 
-    } 
-    var totalR: CGFloat = 0, 
-        totalG: CGFloat = 0, 
-        totalB: CGFloat = 0, 
-        totalA: CGFloat = 0 
-    for color in colors { 
-        var r: CGFloat = 0, 
-            g: CGFloat = 0, 
-            b: CGFloat = 0, 
-            a: CGFloat = 0 
-        color.getRed(
-            &r, 
-            green: &g, 
-            blue: &b, 
-            alpha: &a) 
-        totalR += r 
-        totalG += g 
-        totalB += b 
-        totalA += a 
-    } 
-    let count = CGFloat(colors.count) 
-    return UIColor(red: totalR/count, green: totalG/count, blue: totalB/count, alpha: totalA/count) 
-}
-
 func dotOffset(for nodeType: NodeType, dot: DotPosition) -> CGPoint {
     // Node size depends on whether it's a parent or child.
     let size: CGFloat = (nodeType == .parent) ? 120 : 80
@@ -85,3 +57,84 @@ func canCreateConnectionBetween(_ id1: UUID, _ id2: UUID, in connections: [Conne
         (connection.from == id2 && connection.to == id1)
     }
 }
+
+func randomPositionWithin70Percent(of canvasSize: CGSize) -> CGPoint {
+    // Calculate margins: 15% on each side means nodes appear within the central 70%
+    let horizontalMargin = canvasSize.width * 0.15
+    let verticalMargin = canvasSize.height * 0.15
+    let randomX = CGFloat.random(in: horizontalMargin...(canvasSize.width - horizontalMargin))
+    let randomY = CGFloat.random(in: verticalMargin...(canvasSize.height - verticalMargin))
+    return CGPoint(x: randomX, y: randomY)
+}
+
+extension UIColor {
+    convenience init(hex: String) {
+        var hexSanitized = hex.trimmingCharacters(in: .whitespacesAndNewlines)
+        hexSanitized = hexSanitized.replacingOccurrences(of: "#", with: "")
+        var rgb: UInt64 = 0
+        Scanner(string: hexSanitized).scanHexInt64(&rgb)
+        let r = CGFloat((rgb >> 16) & 0xFF) / 255.0
+        let g = CGFloat((rgb >> 8) & 0xFF) / 255.0
+        let b = CGFloat(rgb & 0xFF) / 255.0
+        self.init(red: r, green: g, blue: b, alpha: 1.0)
+    }
+}
+
+// MARK: - Color Helpers
+
+// Our gray-scale palette from light to dark.
+let grayPaletteHex = [
+    "f9fafb", // gray-50 (lightest)
+    "f3f4f6", // gray-100
+    "e5e7eb", // gray-200
+    "d1d5db", // gray-300
+    "9ca3af", // gray-400
+    "6b7280", // gray-500
+    "4b5563", // gray-600
+    "374151", // gray-700
+    "1f2937", // gray-800
+    "111827", // gray-900
+    "030712"  // gray-950 (darkest)
+]
+let grayPalette: [UIColor] = grayPaletteHex.map { UIColor(hex: $0) }
+
+/// Calculates the color for a Child Node based on its deadline.
+/// - Parameters:
+///   - totalDuration: The total duration in seconds from creation to deadline.
+///   - timeRemaining: The current time remaining (in seconds) until deadline.
+/// - Returns: A UIColor from the palette, where full time remaining yields a light color,
+///            and zero (or negative) time remaining yields the darkest color.
+func childColor(totalDuration: TimeInterval, timeRemaining: TimeInterval) -> UIColor {
+    // Clamp ratio between 0 and 1.
+    let ratio = max(0, min(1, timeRemaining / totalDuration))
+    // When ratio==1 (freshly created), use the lightest color (index 0).
+    // When ratio==0 (deadline reached), use the darkest color (last index).
+    let indexFloat = (1 - ratio) * Double(grayPalette.count - 1)
+    let index = Int(round(indexFloat))
+    return grayPalette[index]
+}
+
+/// Mix an array of UIColors by averaging their RGBA components.
+func mixColors(colors: [UIColor]) -> UIColor {
+    guard !colors.isEmpty else { return UIColor.blue }
+    var totalR: CGFloat = 0, totalG: CGFloat = 0, totalB: CGFloat = 0, totalA: CGFloat = 0
+    for color in colors {
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        color.getRed(&r, green: &g, blue: &b, alpha: &a)
+        totalR += r
+        totalG += g
+        totalB += b
+        totalA += a
+    }
+    let count = CGFloat(colors.count)
+    return UIColor(red: totalR/count, green: totalG/count, blue: totalB/count, alpha: totalA/count)
+}
+
+func contrastingColor(for color: UIColor) -> Color {
+    var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0, alpha: CGFloat = 0
+    color.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
+    // Compute luminance using the standard formula.
+    let luminance = 0.299 * red + 0.587 * green + 0.114 * blue
+    return luminance < 0.5 ? Color.white : Color.black
+}
+

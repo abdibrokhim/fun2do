@@ -3147,3 +3147,2840 @@ Unify your logic for dot positions: a single helper function calculates the dot�
 Use that helper in both ConnectionDotView (when finishing a drag) and in your code that draws ConnectionView.
 Remove any duplicate offset calculations that might cause double‐shifting.
 After these changes, the lines should originate exactly where the dots are, matching what you see on screen.
+
+still there's a bug. lines located top left side. but in reality they should start and end ; from dot to dot. please fix issues.Note: Dots position pretty correct they are correctly located on the top, bottom, left, and right sides of Nodes, so change for dots location.
+
+
+<code_snippet>
+    // Updated connection drag handler that now receives a DotPosition.
+    func handleConnectionDragEnd(from sourceID: UUID, at endPoint: CGPoint, sourceDot: DotPosition) {
+        var closestTarget: (node: Node, dot: DotPosition, distance: CGFloat)? = nil
+        for target in nodes {
+            if target.id == sourceID { continue }
+            for dot in [DotPosition.top, .bottom, .left, .right] {
+                let offset = dotOffset(for: target.type, dot: dot)
+                let targetDotGlobal = CGPoint(x: target.position.x + offset.x,
+                                              y: target.position.y + offset.y)
+                let dx = targetDotGlobal.x - endPoint.x
+                let dy = targetDotGlobal.y - endPoint.y
+                let distance = sqrt(dx*dx + dy*dy)
+                if distance < 30 {
+                    if let current = closestTarget {
+                        if distance < current.distance {
+                            closestTarget = (target, dot, distance)
+                        }
+                    } else {
+                        closestTarget = (target, dot, distance)
+                    }
+                }
+            }
+        }
+        if let targetInfo = closestTarget {
+            if !connections.contains(where: { $0.from == sourceID && $0.to == targetInfo.node.id }) {
+                connections.append(Connection(from: sourceID, to: targetInfo.node.id, fromDot: sourceDot, toDot: targetInfo.dot))
+            }
+        }
+    }
+</code_snippet>
+Reasoned for 39 seconds
+Below is an example of how to ensure lines originate and terminate exactly at the dots (top, bottom, left, right) on each node. The key is to unify how you compute:
+
+Where each node is drawn on the screen (in NodeView).
+Where each dot sits inside the node’s coordinate space.
+Where the line endpoints (in ConnectionView) are located.
+If your dots are already in the correct places on each node, the most common culprit is that ConnectionView is using a different reference point for node positions than your dots do. Below is a distilled example showing how to align them perfectly.
+
+1. Store Each Node’s Top‐Left Corner in node.position
+
+Let’s assume node.position represents the top‐left corner of the node’s bounding box. The node’s circle is then drawn at (0,0) in local coordinates, but we apply a .offset to place it at node.position.
+
+struct NodeView: View {
+    @Binding var node: Node
+    @State private var dragOffset: CGSize = .zero
+    
+    // If it's a parent node, size = 120; otherwise 80
+    private var nodeSize: CGFloat {
+        node.type == .parent ? 120 : 80
+    }
+    
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(Color(node.color))
+                .frame(width: nodeSize, height: nodeSize)
+            
+            Text(node.title)
+                .foregroundColor(.white)
+                .font(node.type == .parent ? .headline : .subheadline)
+        }
+        // Place the node at node.position + any ongoing drag offset
+        .offset(x: node.position.x + dragOffset.width,
+                y: node.position.y + dragOffset.height)
+        .gesture(
+            DragGesture()
+                .onChanged { value in
+                    dragOffset = value.translation
+                }
+                .onEnded { value in
+                    node.position.x += value.translation.width
+                    node.position.y += value.translation.height
+                    dragOffset = .zero
+                }
+        )
+    }
+}
+In this setup, (node.position.x, node.position.y) is the top‐left of the circle. The circle’s center is thus at (node.position.x + nodeSize/2, node.position.y + nodeSize/2).
+
+2. Define a Helper for the Dot’s Global Position
+
+Because the node’s circle is placed at node.position (its top‐left corner), we can compute each dot’s absolute screen coordinate with a small helper. For instance, if you have four dots (top, bottom, left, right), you can do:
+
+enum DotPosition {
+    case top, bottom, left, right
+}
+
+/// Returns the node’s width/height based on whether it’s a parent or child.
+func nodeSize(for node: Node) -> CGFloat {
+    node.type == .parent ? 120 : 80
+}
+
+/// Returns the dot’s position **within** the node’s local coordinate space.
+func localDotOffset(node: Node, dot: DotPosition) -> CGPoint {
+    let size = nodeSize(for: node)
+    switch dot {
+    case .top:
+        return CGPoint(x: size/2, y: 0)
+    case .bottom:
+        return CGPoint(x: size/2, y: size)
+    case .left:
+        return CGPoint(x: 0, y: size/2)
+    case .right:
+        return CGPoint(x: size, y: size/2)
+    }
+}
+
+/// Converts the dot’s local offset into a **global** position on the screen.
+func globalDotPosition(node: Node, dot: DotPosition) -> CGPoint {
+    let offset = localDotOffset(node: node, dot: dot)
+    // node.position is top‐left corner of the node
+    return CGPoint(x: node.position.x + offset.x,
+                   y: node.position.y + offset.y)
+}
+3. Use the Same Helper for ConnectionDotView Drags
+
+When the user drags from a dot, you want to find the starting dot’s global position (so you can measure how far they dragged). For example:
+
+struct ConnectionDotView: View {
+    var node: Node
+    var dot: DotPosition
+    var onDragEnded: ((UUID, CGPoint, DotPosition) -> Void)?
+    
+    var body: some View {
+        // The local position (x, y) inside the node’s bounding box
+        let localPos = localDotOffset(node: node, dot: dot)
+        
+        return Circle()
+            .fill(Color.white)
+            .frame(width: 10, height: 10)
+            .position(localPos)
+            .gesture(
+                DragGesture()
+                    .onEnded { value in
+                        // The dot’s global position BEFORE dragging:
+                        let startPos = globalDotPosition(node: node, dot: dot)
+                        // The final position after drag is start + translation
+                        let endPos = CGPoint(x: startPos.x + value.translation.width,
+                                             y: startPos.y + value.translation.height)
+                        // Notify the parent view
+                        onDragEnded?(node.id, endPos, dot)
+                    }
+            )
+    }
+}
+This ensures the same reference is used for both the dot’s display and the lines that eventually connect to it.
+
+4. Use the Same Helper When Drawing Lines
+
+When you create the line in ConnectionView, you typically do something like:
+
+ForEach(connections) { connection in
+    if let fromNode = nodes.first(where: { $0.id == connection.from }),
+       let toNode   = nodes.first(where: { $0.id == connection.to }) {
+        
+        // Grab the dot positions:
+        let fromPoint = globalDotPosition(node: fromNode, dot: connection.fromDot)
+        let toPoint   = globalDotPosition(node: toNode,   dot: connection.toDot)
+        
+        ConnectionView(from: fromPoint, to: toPoint)
+    }
+}
+Important: Remove any extra offset logic (like + 60 or + 40) if you’re already calling globalDotPosition(...), because that would shift your lines away from the actual dots.
+
+5. Update Your handleConnectionDragEnd to Use globalDotPosition
+
+In your snippet, you do:
+
+func handleConnectionDragEnd(from sourceID: UUID, at endPoint: CGPoint, sourceDot: DotPosition) {
+    var closestTarget: (node: Node, dot: DotPosition, distance: CGFloat)? = nil
+    for target in nodes {
+        if target.id == sourceID { continue }
+        for dot in [DotPosition.top, .bottom, .left, .right] {
+            // Instead of manual offset, use globalDotPosition:
+            let targetDotGlobal = globalDotPosition(node: target, dot: dot)
+            let dx = targetDotGlobal.x - endPoint.x
+            let dy = targetDotGlobal.y - endPoint.y
+            let distance = sqrt(dx*dx + dy*dy)
+            if distance < 30 {
+                // Keep track of the closest node/dot
+                if let current = closestTarget {
+                    if distance < current.distance {
+                        closestTarget = (target, dot, distance)
+                    }
+                } else {
+                    closestTarget = (target, dot, distance)
+                }
+            }
+        }
+    }
+    
+    // If we found a target within 30 points
+    if let targetInfo = closestTarget {
+        // Create the connection if it doesn't exist
+        if !connections.contains(where: { $0.from == sourceID && $0.to == targetInfo.node.id }) {
+            connections.append(
+                Connection(from: sourceID,
+                           to: targetInfo.node.id,
+                           fromDot: sourceDot,
+                           toDot: targetInfo.dot)
+            )
+        }
+    }
+}
+By consistently calling globalDotPosition(node: target, dot: dot), you’ll measure the correct distance to each dot. Then, when drawing the lines, you again use globalDotPosition to place endpoints. This alignment fixes the top‐left offset issue.
+
+Final Checklist
+
+NodeView uses .offset(x: node.position.x, y: node.position.y) so the circle’s top‐left corner is at node.position.
+localDotOffset places each dot inside the node’s bounding box (0–size range).
+globalDotPosition = (node.position + localDotOffset).
+ConnectionDotView uses globalDotPosition for the drag start so it’s consistent with how lines are drawn.
+ConnectionView uses the same function for both endpoints, guaranteeing line start/end match the dots.
+With these changes, your lines should precisely connect from dot to dot, rather than floating off in the top‐left corner.
+
+
+
+
+
+
+You said:
+this is my NodeView:
+
+import SwiftUI
+
+struct NodeView: View { 
+    @Binding var node: Node 
+    // Callback for when a parent node is tapped. 
+    var onSelect: (() -> Void)? = nil 
+    // Callback for when a connection gesture ends: (source node id, end point) 
+    var onConnectionDragEnded: ((UUID, CGPoint, DotPosition) -> Void)? = nil 
+    @State private var dragOffset: CGSize = .zero
+    @State private var showConnectionDots = false
+    
+    // Define the size based on node type.
+    var size: CGFloat {
+        switch node.type {
+        case .parent: return 120
+        default: return 80
+        }
+    }
+    
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(Color(node.color))
+                .frame(width: size, height: size)
+            Text(node.title)
+                .foregroundColor(.white)
+                .font(node.type == .parent ? .headline : .subheadline)
+        }
+        .overlay(
+            // If connection dots are visible, show them at top, bottom, left, and right.
+            Group {
+                if showConnectionDots {
+                    // Top dot
+                    ConnectionDotView(node: node, dotPosition: CGPoint(x: size/2, y: 0), dotType: .top, onDragEnded: onConnectionDragEnded)
+                    // Bottom dot
+                    ConnectionDotView(node: node, dotPosition: CGPoint(x: size/2, y: size), dotType: .bottom, onDragEnded: onConnectionDragEnded)
+                    // Left dot
+                    ConnectionDotView(node: node, dotPosition: CGPoint(x: 0, y: size/2), dotType: .left, onDragEnded: onConnectionDragEnded)
+                    // Right dot
+                    ConnectionDotView(node: node, dotPosition: CGPoint(x: size, y: size/2), dotType: .right, onDragEnded: onConnectionDragEnded)
+                }
+            }
+        )
+        .offset(x: node.position.x + dragOffset.width,
+                y: node.position.y + dragOffset.height)
+        .gesture(
+            DragGesture()
+                .onChanged { value in
+                    dragOffset = value.translation
+                }
+                .onEnded { value in
+                    node.position.x += value.translation.width
+                    node.position.y += value.translation.height
+                    dragOffset = .zero
+                }
+        )
+        // A simultaneous tap gesture for parent selection.
+        .simultaneousGesture(
+            TapGesture()
+                .onEnded {
+                    if node.type == .parent {
+                        onSelect?()
+                    }
+                }
+        )
+        // Long press to toggle connection dots.
+        .gesture(
+            LongPressGesture(minimumDuration: 1)
+                .onEnded { _ in
+                    withAnimation { showConnectionDots.toggle() }
+                }
+        )
+    }
+}
+Reasoned for 10 seconds
+Below is one straightforward way to fix the offset issue so that the lines originate and terminate exactly where the dots are shown. The key is to unify how you calculate each dot’s global position—both when you draw the dots and when you draw the lines.
+
+1. Add a Helper to Compute a Dot’s Global Position
+
+In your code, each node’s top-left corner is placed at node.position, and the circle is drawn at (0,0) inside that bounding box. A parent node has a size of 120×120, while a child node has a size of 80×80.
+
+We’ll define:
+
+localDotOffset(nodeType:dot:) to get the dot’s position within the node’s local coordinate space.
+globalDotPosition(node:dot:) to add the node’s position offset.
+Example:
+
+enum DotPosition {
+    case top, bottom, left, right
+}
+
+func localDotOffset(nodeType: NodeType, dot: DotPosition) -> CGPoint {
+    let size: CGFloat = (nodeType == .parent) ? 120 : 80
+    switch dot {
+    case .top:
+        return CGPoint(x: size / 2, y: 0)
+    case .bottom:
+        return CGPoint(x: size / 2, y: size)
+    case .left:
+        return CGPoint(x: 0, y: size / 2)
+    case .right:
+        return CGPoint(x: size, y: size / 2)
+    }
+}
+
+/// Returns the absolute (global) position of a given dot on the node.
+func globalDotPosition(node: Node, dot: DotPosition) -> CGPoint {
+    let localOffset = localDotOffset(nodeType: node.type, dot: dot)
+    return CGPoint(x: node.position.x + localOffset.x,
+                   y: node.position.y + localOffset.y)
+}
+2. Update ConnectionDotView to Use This Helper
+
+Right now, your ConnectionDotView uses a hard-coded approach to figure out the global location on drag end. Instead, call globalDotPosition:
+
+struct ConnectionDotView: View {
+    var node: Node
+    // The dot’s position in the node’s local coordinate space
+    var dotPosition: CGPoint
+    var dotType: DotPosition
+    var onDragEnded: ((UUID, CGPoint, DotPosition) -> Void)? = nil
+    
+    var body: some View {
+        Circle()
+            .fill(Color.white)
+            .frame(width: 10, height: 10)
+            // Position in local space (the node’s bounding box).
+            .position(dotPosition)
+            .gesture(
+                DragGesture()
+                    .onEnded { value in
+                        // Dot's global position BEFORE dragging:
+                        let startGlobal = globalDotPosition(node: node, dot: dotType)
+                        // Final position after drag:
+                        let endGlobal = CGPoint(
+                            x: startGlobal.x + value.translation.width,
+                            y: startGlobal.y + value.translation.height
+                        )
+                        onDragEnded?(node.id, endGlobal, dotType)
+                    }
+            )
+    }
+}
+Notice:
+
+We keep dotPosition for the local .position(...) in SwiftUI.
+For the actual drag calculations, we use globalDotPosition(node, dotType) to ensure we measure from the same anchor that the lines will use.
+3. Update handleConnectionDragEnd to Use the Same Logic
+
+When you try to find the closest dot on another node, call globalDotPosition for each possible dot:
+
+func handleConnectionDragEnd(
+    from sourceID: UUID,
+    at endPoint: CGPoint,
+    sourceDot: DotPosition
+) {
+    var closestTarget: (node: Node, dot: DotPosition, distance: CGFloat)? = nil
+    
+    for target in nodes {
+        if target.id == sourceID { continue }
+        for dot in [DotPosition.top, .bottom, .left, .right] {
+            // Instead of manual offset, use the helper:
+            let targetDotGlobal = globalDotPosition(node: target, dot: dot)
+            let dx = targetDotGlobal.x - endPoint.x
+            let dy = targetDotGlobal.y - endPoint.y
+            let dist = sqrt(dx*dx + dy*dy)
+            if dist < 30 {
+                if let current = closestTarget {
+                    if dist < current.distance {
+                        closestTarget = (target, dot, dist)
+                    }
+                } else {
+                    closestTarget = (target, dot, dist)
+                }
+            }
+        }
+    }
+    
+    if let targetInfo = closestTarget {
+        if !connections.contains(where: { $0.from == sourceID && $0.to == targetInfo.node.id }) {
+            connections.append(
+                Connection(from: sourceID,
+                           to: targetInfo.node.id,
+                           fromDot: sourceDot,
+                           toDot: targetInfo.dot)
+            )
+        }
+    }
+}
+4. Draw the Lines Using globalDotPosition for Both Ends
+
+Finally, wherever you render your connections (for example, in a ForEach(connections) { connection in ... } block), do this:
+
+ForEach(connections) { connection in
+    if let fromNode = nodes.first(where: { $0.id == connection.from }),
+       let toNode = nodes.first(where: { $0.id == connection.to }) {
+        
+        let fromPoint = globalDotPosition(node: fromNode, dot: connection.fromDot)
+        let toPoint   = globalDotPosition(node: toNode,   dot: connection.toDot)
+        
+        ConnectionView(from: fromPoint, to: toPoint)
+    }
+}
+This ensures the line’s start and end points match exactly where the ConnectionDotView is placed. Remove any extra “+ 40” or “+ 60” offsets that might shift it away.
+
+5. Confirm the NodeView Layout
+
+In your NodeView code, you do:
+
+Circle()
+    .fill(Color(node.color))
+    .frame(width: size, height: size)
+Text(node.title)
+    // ...
+.overlay(
+    Group {
+        if showConnectionDots {
+            // top
+            ConnectionDotView(node: node, dotPosition: CGPoint(x: size/2, y: 0), ...)
+            // bottom
+            ConnectionDotView(node: node, dotPosition: CGPoint(x: size/2, y: size), ...)
+            // left
+            ConnectionDotView(node: node, dotPosition: CGPoint(x: 0, y: size/2), ...)
+            // right
+            ConnectionDotView(node: node, dotPosition: CGPoint(x: size, y: size/2), ...)
+        }
+    }
+)
+.offset(x: node.position.x + dragOffset.width,
+        y: node.position.y + dragOffset.height)
+This means:
+
+The top-left corner of the node’s bounding box is at (node.position.x, node.position.y).
+The circle is at (0,0) within that bounding box.
+The top dot is at (size/2, 0) relative to (0,0) in local space, so it’s exactly at the top edge.
+The bottom dot is (size/2, size), etc.
+As long as you consistently use globalDotPosition for lines, you’ll get correct alignment.
+
+TL;DR
+Store each node’s top-left corner in node.position.
+Define globalDotPosition(node, dot) which adds node.position + localDotOffset.
+Use that same function in ConnectionDotView for drag calculations and in the code that draws the lines.
+Remove any leftover manual offsets that might shift lines away from the dots.
+With these steps, your lines will connect exactly from dot to dot instead of drifting to the top-left corner.
+
+
+
+
+
+
+You said:
+pleas use this flowchart logic for displaying our Brain app lines in the proper location. 
+
+
+<example_code_snipppet>
+import SwiftUI
+import PlaygroundSupport
+
+// MARK: - Shape Types
+
+enum ShapeType: String, CaseIterable {
+    case circle = "Circle"
+    case triangle = "Triangle"
+    case rectangle = "Rectangle"
+}
+
+// MARK: - Model Structures
+
+struct FlowchartElement: Identifiable {
+    let id = UUID()
+    let type: ShapeType
+    var position: CGPoint
+}
+
+struct Connection: Identifiable {
+    let id = UUID()
+    let from: UUID
+    let to: UUID
+}
+
+// MARK: - View Model
+
+class FlowchartViewModel: ObservableObject {
+    @Published var elements: [FlowchartElement] = []
+    @Published var connections: [Connection] = []
+    
+    func addElement(type: ShapeType, at position: CGPoint) {
+        let newElement = FlowchartElement(type: type, position: position)
+        elements.append(newElement)
+    }
+    
+    func addConnection(from: UUID, to: UUID) {
+        // Avoid self-connections and duplicates.
+        guard from != to,
+              !connections.contains(where: { ($0.from == from && $0.to == to) || ($0.from == to && $0.to == from) })
+        else { return }
+        let connection = Connection(from: from, to: to)
+        connections.append(connection)
+    }
+    
+    func updatePosition(for element: FlowchartElement, to newPosition: CGPoint) {
+        if let index = elements.firstIndex(where: { $0.id == element.id }) {
+            elements[index].position = newPosition
+        }
+    }
+}
+
+// MARK: - Custom Shapes
+
+struct Triangle: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let pt1 = CGPoint(x: rect.midX, y: rect.minY)
+        let pt2 = CGPoint(x: rect.maxX, y: rect.maxY)
+        let pt3 = CGPoint(x: rect.minX, y: rect.maxY)
+        path.move(to: pt1)
+        path.addLine(to: pt2)
+        path.addLine(to: pt3)
+        path.closeSubpath()
+        return path
+    }
+}
+
+struct ShapeView: View {
+    var element: FlowchartElement
+    var body: some View {
+        Group {
+            switch element.type {
+            case .circle:
+                Circle()
+                    .stroke(Color.blue, lineWidth: 2)
+                    .frame(width: 80, height: 80)
+            case .triangle:
+                Triangle()
+                    .stroke(Color.green, lineWidth: 2)
+                    .frame(width: 80, height: 80)
+            case .rectangle:
+                Rectangle()
+                    .stroke(Color.red, lineWidth: 2)
+                    .frame(width: 80, height: 80)
+            }
+        }
+    }
+}
+
+// MARK: - Main ContentView
+
+struct ContentView: View {
+    @StateObject var viewModel = FlowchartViewModel()
+    // For creating connections: first tap selects an element, second tap connects it.
+    @State private var selectedElementID: UUID? = nil
+    
+    var body: some View {
+        HStack(spacing: 0) {
+            // Left Panel: Toolbox
+            VStack(spacing: 20) {
+                ForEach(ShapeType.allCases, id: \.self) { shape in
+                    Text(shape.rawValue)
+                        .padding()
+                        .background(Color.gray.opacity(0.2))
+                        .cornerRadius(8)
+                        .onDrag {
+                            // Drag the shape name so the canvas knows which type was dropped.
+                            return NSItemProvider(object: shape.rawValue as NSString)
+                        }
+                }
+                Spacer()
+            }
+            .frame(width: 150)
+            .padding()
+            .background(Color(white: 0.95))
+            
+            // Right Panel: Canvas
+            ZStack {
+                Color.white
+                
+                // Draw connections between elements.
+                ForEach(viewModel.connections) { connection in
+                    if let fromElement = viewModel.elements.first(where: { $0.id == connection.from }),
+                       let toElement = viewModel.elements.first(where: { $0.id == connection.to }) {
+                        Path { path in
+                            path.move(to: fromElement.position)
+                            path.addLine(to: toElement.position)
+                        }
+                        .stroke(Color.black, lineWidth: 2)
+                    }
+                }
+                
+                // Draw and interact with elements.
+                ForEach(viewModel.elements) { element in
+                    ShapeView(element: element)
+                        .position(element.position)
+                        // Drag to reposition the element.
+                        .gesture(
+                            DragGesture()
+                                .onChanged { value in
+                                    viewModel.updatePosition(for: element, to: value.location)
+                                }
+                        )
+                        // Tap to select for connection creation.
+                        .onTapGesture {
+                            if let selected = selectedElementID {
+                                // If another element is already selected, add a connection.
+                                if selected != element.id {
+                                    viewModel.addConnection(from: selected, to: element.id)
+                                    selectedElementID = nil
+                                }
+                            } else {
+                                // Select this element for connection.
+                                selectedElementID = element.id
+                            }
+                        }
+                        .overlay(
+                            // If the element is selected, show a highlight.
+                            Circle()
+                                .stroke(Color.blue, lineWidth: selectedElementID == element.id ? 4 : 0)
+                                .frame(width: 90, height: 90)
+                        )
+                }
+            }
+            // Handle drop: when a shape is dropped onto the canvas, add a new element.
+            .onDrop(of: ["public.text"], isTargeted: nil) { providers, location in
+                if let provider = providers.first {
+                    _ = provider.loadObject(ofClass: NSString.self) { object, error in
+                        if let shapeName = object as? String,
+                           let shapeType = ShapeType(rawValue: shapeName) {
+                            DispatchQueue.main.async {
+                                viewModel.addElement(type: shapeType, at: location)
+                            }
+                        }
+                    }
+                }
+                return true
+            }
+        }
+        .edgesIgnoringSafeArea(.all)
+    }
+}
+
+// MARK: - Playground Live View
+
+PlaygroundPage.current.setLiveView(ContentView())
+</example_code_snipppet>
+Reasoned for 32 seconds
+Below is one complete solution that mimics the flowchart‐style logic. In this approach we make two key changes:
+
+We change our NodeView so that each node is placed using the .position(…) modifier. (In the flowchart example, an element’s position is its center.)
+We recalculate each dot’s location relative to the node’s center (instead of the top‐left) so that our connection lines drawn using the same helper match exactly the dot locations.
+Try the following updated code. (You can integrate this into your project.)
+
+import SwiftUI
+import PlaygroundSupport
+
+// MARK: - Data Models
+
+enum NodeType {
+    case genesis, parent, child
+}
+
+enum DotPosition {
+    case top, bottom, left, right
+}
+
+struct Node: Identifiable {
+    let id = UUID()
+    var title: String
+    var description: String = ""
+    var deadline: Date = Date()
+    var status: String = ""
+    var type: NodeType
+    /// IMPORTANT: Now, node.position is the CENTER of the node.
+    var position: CGPoint
+    var color: UIColor
+    var childIDs: [UUID] = []
+    var parentID: UUID? = nil
+}
+
+struct Connection: Identifiable {
+    let id = UUID()
+    let from: UUID   // parent's id
+    let to: UUID     // child's id
+    let fromDot: DotPosition
+    let toDot: DotPosition
+}
+
+// MARK: - Helpers for Dot Positioning
+
+/// Given the node type and a dot side, returns the offset (in points)
+/// from the node’s center to that dot.
+func localDotOffset(nodeType: NodeType, dot: DotPosition) -> CGPoint {
+    // Use the same size as the node’s drawn diameter.
+    let size: CGFloat = (nodeType == .parent) ? 120 : 80
+    switch dot {
+    case .top:
+        return CGPoint(x: 0, y: -size/2)
+    case .bottom:
+        return CGPoint(x: 0, y: size/2)
+    case .left:
+        return CGPoint(x: -size/2, y: 0)
+    case .right:
+        return CGPoint(x: size/2, y: 0)
+    }
+}
+
+/// Computes the global (screen) position of a dot on the node.
+/// Since node.position is the CENTER of the node, we add the local offset.
+func globalDotPosition(node: Node, dot: DotPosition) -> CGPoint {
+    let offset = localDotOffset(nodeType: node.type, dot: dot)
+    return CGPoint(x: node.position.x + offset.x, y: node.position.y + offset.y)
+}
+
+// MARK: - Connection View
+
+struct ConnectionView: View {
+    var from: CGPoint
+    var to: CGPoint
+    var body: some View {
+        Path { path in
+            path.move(to: from)
+            // Use the midpoint as a control point (adjust if desired)
+            let control = CGPoint(x: (from.x + to.x) / 2,
+                                  y: (from.y + to.y) / 2)
+            path.addQuadCurve(to: to, control: control)
+        }
+        .stroke(Color.gray, lineWidth: 2)
+    }
+}
+
+// MARK: - ConnectionDotView
+
+struct ConnectionDotView: View {
+    var node: Node
+    var dot: DotPosition
+    // Callback: (node.id, final global point, dot type)
+    var onDragEnded: ((UUID, CGPoint, DotPosition) -> Void)? = nil
+    
+    var body: some View {
+        // The node’s drawn size:
+        let size: CGFloat = (node.type == .parent) ? 120 : 80
+        // In the node’s local coordinate space, the center is at (size/2, size/2)
+        // The dot’s offset from center is given by localDotOffset.
+        let localOffset = localDotOffset(nodeType: node.type, dot: dot)
+        let dotPos = CGPoint(x: size/2 + localOffset.x,
+                             y: size/2 + localOffset.y)
+        
+        return Circle()
+            .fill(Color.white)
+            .frame(width: 10, height: 10)
+            .position(dotPos)
+            .gesture(
+                DragGesture().onEnded { value in
+                    // Get the dot's global position (based on the node's center)
+                    let startGlobal = globalDotPosition(node: node, dot: dot)
+                    let endGlobal = CGPoint(x: startGlobal.x + value.translation.width,
+                                            y: startGlobal.y + value.translation.height)
+                    onDragEnded?(node.id, endGlobal, dot)
+                }
+            )
+    }
+}
+
+// MARK: - NodeView
+
+struct NodeView: View {
+    @Binding var node: Node
+    var onSelect: (() -> Void)? = nil
+    // Callback for when a connection gesture ends.
+    var onConnectionDragEnded: ((UUID, CGPoint, DotPosition) -> Void)? = nil
+    @State private var dragOffset: CGSize = .zero
+    @State private var showConnectionDots = false
+    
+    // Node size: 120 for parent; 80 for others.
+    var size: CGFloat {
+        node.type == .parent ? 120 : 80
+    }
+    
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(Color(node.color))
+                .frame(width: size, height: size)
+            Text(node.title)
+                .foregroundColor(.white)
+                .font(node.type == .parent ? .headline : .subheadline)
+        }
+        .overlay(
+            Group {
+                if showConnectionDots {
+                    ConnectionDotView(node: node, dot: .top, onDragEnded: onConnectionDragEnded)
+                    ConnectionDotView(node: node, dot: .bottom, onDragEnded: onConnectionDragEnded)
+                    ConnectionDotView(node: node, dot: .left, onDragEnded: onConnectionDragEnded)
+                    ConnectionDotView(node: node, dot: .right, onDragEnded: onConnectionDragEnded)
+                }
+            }
+        )
+        // Use .position so that node.position represents the CENTER.
+        .position(x: node.position.x + dragOffset.width, y: node.position.y + dragOffset.height)
+        .gesture(
+            DragGesture()
+                .onChanged { value in
+                    dragOffset = value.translation
+                }
+                .onEnded { value in
+                    node.position.x += value.translation.width
+                    node.position.y += value.translation.height
+                    dragOffset = .zero
+                }
+        )
+        .simultaneousGesture(
+            TapGesture().onEnded {
+                if node.type == .parent {
+                    onSelect?()
+                }
+            }
+        )
+        .gesture(
+            LongPressGesture(minimumDuration: 1)
+                .onEnded { _ in
+                    withAnimation { showConnectionDots.toggle() }
+                }
+        )
+    }
+}
+
+// MARK: - Example Usage in a "Brain" Canvas
+
+// (This is a simplified version of your main canvas logic.)
+struct BrainCanvasView: View {
+    @State private var nodes: [Node] = []
+    @State private var connections: [Connection] = []
+    
+    // Example connection drag handler.
+    func handleConnectionDragEnd(from sourceID: UUID, at endPoint: CGPoint, sourceDot: DotPosition) {
+        var closestTarget: (node: Node, dot: DotPosition, distance: CGFloat)? = nil
+        for target in nodes {
+            if target.id == sourceID { continue }
+            for dot in [DotPosition.top, .bottom, .left, .right] {
+                let targetGlobal = globalDotPosition(node: target, dot: dot)
+                let dx = targetGlobal.x - endPoint.x
+                let dy = targetGlobal.y - endPoint.y
+                let distance = sqrt(dx*dx + dy*dy)
+                if distance < 30 {
+                    if let current = closestTarget {
+                        if distance < current.distance {
+                            closestTarget = (target, dot, distance)
+                        }
+                    } else {
+                        closestTarget = (target, dot, distance)
+                    }
+                }
+            }
+        }
+        if let targetInfo = closestTarget {
+            if !connections.contains(where: { $0.from == sourceID && $0.to == targetInfo.node.id }) {
+                connections.append(
+                    Connection(from: sourceID,
+                               to: targetInfo.node.id,
+                               fromDot: sourceDot,
+                               toDot: targetInfo.dot)
+                )
+            }
+        }
+    }
+    
+    var body: some View {
+        ZStack {
+            Color(UIColor.systemGray6)
+                .edgesIgnoringSafeArea(.all)
+            // Draw connection lines.
+            ForEach(connections) { connection in
+                if let fromNode = nodes.first(where: { $0.id == connection.from }),
+                   let toNode   = nodes.first(where: { $0.id == connection.to }) {
+                    let fromPoint = globalDotPosition(node: fromNode, dot: connection.fromDot)
+                    let toPoint   = globalDotPosition(node: toNode, dot: connection.toDot)
+                    ConnectionView(from: fromPoint, to: toPoint)
+                }
+            }
+            // Draw nodes.
+            ForEach($nodes) { $node in
+                NodeView(node: $node, onConnectionDragEnded: { sourceID, endPoint, sourceDot in
+                    handleConnectionDragEnd(from: sourceID, at: endPoint, sourceDot: sourceDot)
+                })
+            }
+        }
+        .onAppear {
+            // Example: add two nodes.
+            // Now node.position represents the center.
+            nodes.append(Node(title: "Task 1", type: .parent, position: CGPoint(x: 200, y: 300), color: UIColor.blue))
+            nodes.append(Node(title: "Task 2", type: .child, position: CGPoint(x: 400, y: 500), color: UIColor.green))
+        }
+    }
+}
+
+// MARK: - Playground Live View
+
+PlaygroundPage.current.setLiveView(BrainCanvasView())
+Explanation
+Node Positioning:
+– We now use .position(…) so that each node’s position represents its center.
+– When dragging, we update the center accordingly.
+Dot Calculation:
+– The helper localDotOffset(…) returns offsets from the center. For example, the top dot is at (0, –size/2).
+– globalDotPosition(…) adds that offset to the node’s center, ensuring the dot’s global position matches what you see.
+– In ConnectionDotView, we place the dot in the node’s local coordinate space by computing:
+   dotPos = (nodeSize/2 + localOffset).
+– When dragging ends, we add the drag translation to the global dot position.
+Connection Lines:
+– In the main canvas, when drawing lines we use globalDotPosition(…) for both endpoints. This ensures that lines connect exactly from dot to dot.
+This updated approach closely mimics the flowchart logic in your example (where element.position is the center) and guarantees that the connection lines appear in the correct locations relative to the nodes’ dots.
+
+Give this version a try. It should fix the issue with lines being offset toward the top‐left. Let me know if you have further questions or tweaks!
+
+
+
+
+
+
+You said:
+Now it's working pretty great! please update my MainCanvasView accordingly.
+Also block any duplicate connections. For example: 1) I have already connected top of the Node1  to left side of the Node2. The block any other connections between these Nodes. You should block connection from left side of the Node1 to the top side of the Node1. Because we have already established connection between them and one connection is enough between two Nodes.   I mean one to one logic here. But make sure One child Node could be connected to the multiple Parent Nodes and Child Nodes but there should not be duplicates . Child Node1 left connected to the Parent Node1 top. Block other : Child Node1 top connected to the Parent Node1 left. there are totally same nodes.
+
+import SwiftUI
+
+struct MainCanvasView: View { 
+    @State private var nodes: [Node] = [] 
+    @State private var connections: [Connection] = []
+    // Dropdown and modal control.
+    @State private var showDropdown = false
+    @State private var showParentModal = false
+    @State private var showChildModal = false
+    @State private var showNoParentAlert = false
+    @State private var showMaxChildAlert = false
+    
+    // Track the currently selected parent node (by its id).
+    @State private var selectedParentID: UUID? = nil
+    
+    var body: some View {
+        ZStack {
+            Color(UIColor.systemGray6)
+                .edgesIgnoringSafeArea(.all)
+            // Using double-tap as a placeholder.
+                .onTapGesture(count: 2) {
+                    withAnimation { showDropdown.toggle() }
+                }
+            
+            // Render connection curves.
+            ForEach(connections) { connection in
+                if let fromNode = nodes.first(where: { $0.id == connection.from }),
+                   let toNode = nodes.first(where: { $0.id == connection.to }) {
+                    
+                    let fromPoint = globalDotPosition(node: fromNode, dot: connection.fromDot)
+                    let toPoint   = globalDotPosition(node: toNode,   dot: connection.toDot)
+                    
+                    ConnectionView(from: fromPoint, to: toPoint)
+                }
+            }
+
+            
+            // Render nodes.
+            ForEach($nodes) { $node in
+                NodeView(node: $node, onSelect: {
+                    if node.type == .parent {
+                        selectedParentID = node.id
+                    }
+                }, onConnectionDragEnded: { sourceID, endPoint, sourceDot in
+                    handleConnectionDragEnd(from: sourceID, at: endPoint, sourceDot: sourceDot)
+                })
+            }
+            
+            // Dropdown overlay.
+            if showDropdown {
+                VStack {
+                    Spacer()
+                    HStack {
+                        Spacer()
+                        VStack(spacing: 10) {
+                            Button("Create Parent Node") {
+                                showParentModal = true
+                                showDropdown = false
+                            }
+                            .padding()
+                            .background(Color.blue)
+                            .foregroundColor(.white)
+                            .cornerRadius(8)
+                            
+                            Button("Create Child Node") {
+                                if let parentID = selectedParentID {
+                                    let childCount = nodes.filter { $0.parentID == parentID }.count
+                                    if childCount >= 8 {
+                                        showMaxChildAlert = true
+                                    } else {
+                                        showChildModal = true
+                                    }
+                                } else {
+                                    showNoParentAlert = true
+                                }
+                                showDropdown = false
+                            }
+                            .padding()
+                            .background(Color.green)
+                            .foregroundColor(.white)
+                            .cornerRadius(8)
+                        }
+                        .padding()
+                        Spacer()
+                    }
+                    Spacer()
+                }
+                .background(Color.black.opacity(0.4).edgesIgnoringSafeArea(.all))
+            }
+        }
+        // Present modals.
+        .sheet(isPresented: $showParentModal) {
+            ParentNodeCreationView { newNode in
+                nodes.append(newNode)
+            }
+        }
+        .sheet(isPresented: $showChildModal) {
+            ChildNodeCreationView { newChild in
+                if let parentID = selectedParentID,
+                   let index = nodes.firstIndex(where: { $0.id == parentID }) {
+                    var childNode = newChild
+                    childNode.parentID = parentID
+                    nodes.append(childNode)
+                    nodes[index].childIDs.append(childNode.id)
+                    updateParentColor(for: parentID)
+                }
+            }
+        }
+        // Alerts.
+        .alert(isPresented: $showNoParentAlert) {
+            Alert(title: Text("No Parent Selected"),
+                  message: Text("Please select a parent node by tapping it before creating a child node."),
+                  dismissButton: .default(Text("OK")))
+        }
+        .alert(isPresented: $showMaxChildAlert) {
+            Alert(title: Text("Max Child Nodes Reached"),
+                  message: Text("A parent node can have a maximum of 8 child nodes."),
+                  dismissButton: .default(Text("OK")))
+        }
+        .onAppear {
+            if !nodes.contains(where: { $0.type == .genesis }) {
+                let genesisNode = Node(title: "Genesis Brain",
+                                       type: .genesis,
+                                       position: CGPoint(x: 200, y: 50),
+                                       color: UIColor.purple)
+                nodes.append(genesisNode)
+            }
+        }
+    }
+    
+    // Updated connection drag handler that now receives a DotPosition.
+    func handleConnectionDragEnd(
+        from sourceID: UUID,
+        at endPoint: CGPoint,
+        sourceDot: DotPosition
+    ) {
+        var closestTarget: (node: Node, dot: DotPosition, distance: CGFloat)? = nil
+        
+        for target in nodes {
+            if target.id == sourceID { continue }
+            for dot in [DotPosition.top, .bottom, .left, .right] {
+                // Instead of manual offset, use the helper:
+                let targetDotGlobal = globalDotPosition(node: target, dot: dot)
+                let dx = targetDotGlobal.x - endPoint.x
+                let dy = targetDotGlobal.y - endPoint.y
+                let dist = sqrt(dx*dx + dy*dy)
+                if dist < 30 {
+                    if let current = closestTarget {
+                        if dist < current.distance {
+                            closestTarget = (target, dot, dist)
+                        }
+                    } else {
+                        closestTarget = (target, dot, dist)
+                    }
+                }
+            }
+        }
+        
+        if let targetInfo = closestTarget {
+            if !connections.contains(where: { $0.from == sourceID && $0.to == targetInfo.node.id }) {
+                connections.append(
+                    Connection(from: sourceID,
+                               to: targetInfo.node.id,
+                               fromDot: sourceDot,
+                               toDot: targetInfo.dot)
+                )
+            }
+        }
+    }
+
+    
+    func updateParentColor(for parentID: UUID) {
+        guard let parentIndex = nodes.firstIndex(where: { $0.id == parentID }) else { return }
+        let childColors = nodes.filter { $0.parentID == parentID }.map { $0.color }
+        if !childColors.isEmpty {
+            let mixed = mixColors(colors: childColors)
+            nodes[parentIndex].color = mixed
+        } else {
+            nodes[parentIndex].color = UIColor.blue
+        }
+    }
+}
+Reasoned for 13 seconds
+Below is an updated version of your MainCanvasView that implements the following changes:
+
+• When attempting to create a connection, it now checks for duplicate connections between the same two nodes (in either direction) and blocks any additional connection regardless of which dot was used.
+• In other words, if there’s already a connection between, say, Node1 and Node2, then even if the user tries to connect a different dot from Node1 to a different dot on Node2, the new connection will be blocked.
+
+Copy and paste the updated MainCanvasView code below:
+
+import SwiftUI
+
+struct MainCanvasView: View { 
+    @State private var nodes: [Node] = [] 
+    @State private var connections: [Connection] = []
+    
+    // Dropdown and modal control.
+    @State private var showDropdown = false
+    @State private var showParentModal = false
+    @State private var showChildModal = false
+    @State private var showNoParentAlert = false
+    @State private var showMaxChildAlert = false
+    
+    // Track the currently selected parent node (by its id).
+    @State private var selectedParentID: UUID? = nil
+    
+    var body: some View {
+        ZStack {
+            Color(UIColor.systemGray6)
+                .edgesIgnoringSafeArea(.all)
+                // Using double-tap as a placeholder.
+                .onTapGesture(count: 2) {
+                    withAnimation { showDropdown.toggle() }
+                }
+            
+            // Render connection curves.
+            ForEach(connections) { connection in
+                if let fromNode = nodes.first(where: { $0.id == connection.from }),
+                   let toNode = nodes.first(where: { $0.id == connection.to }) {
+                    
+                    let fromPoint = globalDotPosition(node: fromNode, dot: connection.fromDot)
+                    let toPoint   = globalDotPosition(node: toNode,   dot: connection.toDot)
+                    
+                    ConnectionView(from: fromPoint, to: toPoint)
+                }
+            }
+            
+            // Render nodes.
+            ForEach($nodes) { $node in
+                NodeView(node: $node, onSelect: {
+                    if node.type == .parent {
+                        selectedParentID = node.id
+                    }
+                }, onConnectionDragEnded: { sourceID, endPoint, sourceDot in
+                    handleConnectionDragEnd(from: sourceID, at: endPoint, sourceDot: sourceDot)
+                })
+            }
+            
+            // Dropdown overlay.
+            if showDropdown {
+                VStack {
+                    Spacer()
+                    HStack {
+                        Spacer()
+                        VStack(spacing: 10) {
+                            Button("Create Parent Node") {
+                                showParentModal = true
+                                showDropdown = false
+                            }
+                            .padding()
+                            .background(Color.blue)
+                            .foregroundColor(.white)
+                            .cornerRadius(8)
+                            
+                            Button("Create Child Node") {
+                                if let parentID = selectedParentID {
+                                    let childCount = nodes.filter { $0.parentID == parentID }.count
+                                    if childCount >= 8 {
+                                        showMaxChildAlert = true
+                                    } else {
+                                        showChildModal = true
+                                    }
+                                } else {
+                                    showNoParentAlert = true
+                                }
+                                showDropdown = false
+                            }
+                            .padding()
+                            .background(Color.green)
+                            .foregroundColor(.white)
+                            .cornerRadius(8)
+                        }
+                        .padding()
+                        Spacer()
+                    }
+                    Spacer()
+                }
+                .background(Color.black.opacity(0.4).edgesIgnoringSafeArea(.all))
+            }
+        }
+        // Present modals.
+        .sheet(isPresented: $showParentModal) {
+            ParentNodeCreationView { newNode in
+                nodes.append(newNode)
+            }
+        }
+        .sheet(isPresented: $showChildModal) {
+            ChildNodeCreationView { newChild in
+                if let parentID = selectedParentID,
+                   let index = nodes.firstIndex(where: { $0.id == parentID }) {
+                    var childNode = newChild
+                    childNode.parentID = parentID
+                    nodes.append(childNode)
+                    nodes[index].childIDs.append(childNode.id)
+                    updateParentColor(for: parentID)
+                }
+            }
+        }
+        // Alerts.
+        .alert(isPresented: $showNoParentAlert) {
+            Alert(title: Text("No Parent Selected"),
+                  message: Text("Please select a parent node by tapping it before creating a child node."),
+                  dismissButton: .default(Text("OK")))
+        }
+        .alert(isPresented: $showMaxChildAlert) {
+            Alert(title: Text("Max Child Nodes Reached"),
+                  message: Text("A parent node can have a maximum of 8 child nodes."),
+                  dismissButton: .default(Text("OK")))
+        }
+        .onAppear {
+            if !nodes.contains(where: { $0.type == .genesis }) {
+                let genesisNode = Node(title: "Genesis Brain",
+                                       type: .genesis,
+                                       position: CGPoint(x: 200, y: 50),
+                                       color: UIColor.purple)
+                nodes.append(genesisNode)
+            }
+        }
+    }
+    
+    // Updated connection drag handler that now receives a DotPosition.
+    func handleConnectionDragEnd(
+        from sourceID: UUID,
+        at endPoint: CGPoint,
+        sourceDot: DotPosition
+    ) {
+        var closestTarget: (node: Node, dot: DotPosition, distance: CGFloat)? = nil
+        
+        for target in nodes {
+            if target.id == sourceID { continue }
+            for dot in [DotPosition.top, .bottom, .left, .right] {
+                // Compute the global dot position for the target node.
+                let targetDotGlobal = globalDotPosition(node: target, dot: dot)
+                let dx = targetDotGlobal.x - endPoint.x
+                let dy = targetDotGlobal.y - endPoint.y
+                let dist = sqrt(dx*dx + dy*dy)
+                if dist < 30 {
+                    if let current = closestTarget {
+                        if dist < current.distance {
+                            closestTarget = (target, dot, dist)
+                        }
+                    } else {
+                        closestTarget = (target, dot, dist)
+                    }
+                }
+            }
+        }
+        
+        if let targetInfo = closestTarget {
+            // Check for duplicate connections (regardless of dot positions)
+            let duplicateExists = connections.contains { conn in
+                (conn.from == sourceID && conn.to == targetInfo.node.id) ||
+                (conn.from == targetInfo.node.id && conn.to == sourceID)
+            }
+            
+            if !duplicateExists {
+                connections.append(
+                    Connection(from: sourceID,
+                               to: targetInfo.node.id,
+                               fromDot: sourceDot,
+                               toDot: targetInfo.dot)
+                )
+            }
+        }
+    }
+    
+    func updateParentColor(for parentID: UUID) {
+        guard let parentIndex = nodes.firstIndex(where: { $0.id == parentID }) else { return }
+        let childColors = nodes.filter { $0.parentID == parentID }.map { $0.color }
+        if !childColors.isEmpty {
+            let mixed = mixColors(colors: childColors)
+            nodes[parentIndex].color = mixed
+        } else {
+            nodes[parentIndex].color = UIColor.blue
+        }
+    }
+}
+Explanation
+Duplicate Connection Check:
+In handleConnectionDragEnd, after finding the closest target dot, we now check if any connection exists between the source node and the target node (regardless of which dot was used) by using:
+let duplicateExists = connections.contains { conn in
+    (conn.from == sourceID && conn.to == targetInfo.node.id) ||
+    (conn.from == targetInfo.node.id && conn.to == sourceID)
+}
+If a connection exists, no new connection is added.
+One-to-One Logic:
+This logic ensures that for any given pair of nodes, only one connection is allowed (even if the user tries to connect different dot sides). However, a node may have connections to several other nodes.
+Other Behavior:
+The rest of your MainCanvasView remains unchanged. Nodes are rendered, and the connection lines are drawn using the helper function globalDotPosition (which you already have in your codebase).
+Compile and run this updated MainCanvasView. It should now block any duplicate connections between the same two nodes (regardless of dot positions) while allowing unique connections. Let me know if you need any further tweaks!
+
+
+
+
+
+
+You said:
+Also send me code snippet that will block any other connection between Genesis black and Child Node. I will put it on MainCanvasView.
+This updated MainCanvasView implementation fixes both the connection duplication logic and ensures that only one connection is allowed between two nodes, regardless of the connection dots used. Here's a breakdown of the changes made: 1. **Prevent Duplicate Connections:** In the `handleConnectionDragEnd` function, we've added a check for duplicate connections: ```swift let duplicateExists = connections.contains { conn in (conn.from == sourceID && conn.to == targetInfo.node.id) || (conn.from == targetInfo.node.id && conn.to == sourceID) } ``` This condition ensures that we only add a connection between two nodes if it doesn't already exist (in either direction). 2. **Blocked Any New Connections Between Same Nodes:** Even if you attempt to connect different dots between the same pair of nodes, this check blocks the creation of any new connections (one connection per pair is allowed). 3. **No Duplicates for Child Node Connections:** This check makes sure no duplicate connections are added for child nodes as well. A child node can connect to multiple parent nodes, but duplicate connections will be prevented. --- ### Key Workflow in This Updated Code: - **Connection Validation:** - The valid connection between two nodes only happens when: - There is no existing connection between those two nodes (either direction). - **Drawing the Nodes:** - The `NodeView` is drawing nodes based on a center position. - Connection lines are drawn from the dots via `globalDotPosition`, which ensures the lines align with the correct dot positions. - **Select Parent and Child Nodes:** - Tap gestures are used to select a parent or child. - Use `onConnectionDragEnded` to detect when a connection should be drawn based on drag location and dot type used for the connection. --- ### How to Test: 1. Create multiple **parent** and **child** nodes. 2. **Drag from a connection dot** (top/bottom/left/right) on one node to another node’s dot. 3. **Duplicate connections** should automatically be blocked. 4. **Connection lines** should not overlap, and new connections should appear correctly. If you need additional tweaks or find any other issues, please feel free to reach out! for 25 seconds
+Below is a snippet you can insert into your MainCanvasView (or into your connection‐handler function) that ensures only one connection exists between any two nodes—specifically, it will block any additional connection between your Genesis Brain and a Child Node (or any two nodes, for that matter). In other words, if a connection already exists between Genesis and a given Child Node (regardless of which dot was used on either node), no new connection will be added.
+
+You can add the following helper function and use it inside your connection handler:
+
+// Helper function to check if a connection already exists between two node IDs.
+func canCreateConnectionBetween(_ id1: UUID, _ id2: UUID, in connections: [Connection]) -> Bool {
+    // Returns true only if no connection exists in either direction.
+    return !connections.contains { connection in
+        (connection.from == id1 && connection.to == id2) ||
+        (connection.from == id2 && connection.to == id1)
+    }
+}
+Then, update your handleConnectionDragEnd function as follows:
+
+func handleConnectionDragEnd(
+    from sourceID: UUID,
+    at endPoint: CGPoint,
+    sourceDot: DotPosition
+) {
+    var closestTarget: (node: Node, dot: DotPosition, distance: CGFloat)? = nil
+    
+    for target in nodes {
+        if target.id == sourceID { continue }
+        for dot in [DotPosition.top, .bottom, .left, .right] {
+            // Compute the global dot position for the target node.
+            let targetDotGlobal = globalDotPosition(node: target, dot: dot)
+            let dx = targetDotGlobal.x - endPoint.x
+            let dy = targetDotGlobal.y - endPoint.y
+            let dist = sqrt(dx * dx + dy * dy)
+            if dist < 30 {
+                if let current = closestTarget {
+                    if dist < current.distance {
+                        closestTarget = (target, dot, dist)
+                    }
+                } else {
+                    closestTarget = (target, dot, dist)
+                }
+            }
+        }
+    }
+    
+    if let targetInfo = closestTarget {
+        // Block duplicate connections (including any between Genesis and a Child Node)
+        if canCreateConnectionBetween(sourceID, targetInfo.node.id, in: connections) {
+            connections.append(
+                Connection(from: sourceID,
+                           to: targetInfo.node.id,
+                           fromDot: sourceDot,
+                           toDot: targetInfo.dot)
+            )
+        }
+    }
+}
+How This Works
+Helper Function:
+The canCreateConnectionBetween(_:_:in:) function returns true only if no connection exists between the two given node IDs (in either direction). This ensures that even if the user attempts to connect the same two nodes using different dot combinations, only one connection is created.
+Using the Helper:
+In handleConnectionDragEnd, after you determine the closest target node and dot, you call the helper with the source node ID and the target node’s ID. Only if no connection already exists does the code append a new connection.
+General One-to-One Logic:
+This check applies to every pair of nodes—including Genesis Brain and any Child Node—so you’ll never have duplicate connections between the same two nodes.
+Place this snippet in your MainCanvasView (or inside your connection-handling code) and it will block any duplicate connection between Genesis and a Child Node (as well as between any other two nodes).
+
+
+
+
+
+
+You said:
+Not, it should any connection between Genesis and a Child Node in addition to the duplicates.
+```swift Connection(from: sourceID, to: targetInfo.node.id, fromDot: sourceDot, toDot: targetInfo.dot) ) } } } ``` ### Explanation: 1. **Checking for Existing Connections:** `canCreateConnectionBetween(_)` checks for any preexisting connection between two nodes (in either direction). This prevents the same nodes being connected more than once. 2. **Restricting Genesis and Child Node Connections:** The helper is used within your connection logic to ensure that after the first connection between the Genesis Brain node and a Child Node is made, no further connections between these same two nodes can be established, regardless of whether the connection dots differ. ### To use this snippet: - Add the `canCreateConnectionBetween` helper to your existing MainCanvasView. - Use it within the `handleConnectionDragEnd` function to ensure Genesis and child nodes (and all node pairs) don't form multiple connections. Let me know if further adjustments are needed! for 12 seconds
+Below is a snippet you can insert into your MainCanvasView’s connection‐handler so that—before even checking for duplicates—it outright blocks any connection if one node is the Genesis Brain and the other is a Child Node. In other words, if either:
+
+• The source node is Genesis (type .genesis) and the target is a Child (type .child),
+• Or vice versa,
+
+then no connection will be created.
+
+You can add this check right before you create a new Connection. For example, update your handleConnectionDragEnd function as follows:
+
+func handleConnectionDragEnd(
+    from sourceID: UUID,
+    at endPoint: CGPoint,
+    sourceDot: DotPosition
+) {
+    var closestTarget: (node: Node, dot: DotPosition, distance: CGFloat)? = nil
+    
+    // Find the closest target dot.
+    for target in nodes {
+        if target.id == sourceID { continue }
+        for dot in [DotPosition.top, .bottom, .left, .right] {
+            let targetDotGlobal = globalDotPosition(node: target, dot: dot)
+            let dx = targetDotGlobal.x - endPoint.x
+            let dy = targetDotGlobal.y - endPoint.y
+            let dist = sqrt(dx*dx + dy*dy)
+            if dist < 30 {
+                if let current = closestTarget {
+                    if dist < current.distance {
+                        closestTarget = (target, dot, dist)
+                    }
+                } else {
+                    closestTarget = (target, dot, dist)
+                }
+            }
+        }
+    }
+    
+    // If a target was found, check additional rules.
+    if let targetInfo = closestTarget {
+        // Get the source node.
+        guard let sourceNode = nodes.first(where: { $0.id == sourceID }) else { return }
+        
+        // BLOCK ANY CONNECTION if one node is Genesis and the other is Child.
+        if (sourceNode.type == .genesis && targetInfo.node.type == .child) ||
+           (sourceNode.type == .child && targetInfo.node.type == .genesis) {
+            // Do not create connection.
+            return
+        }
+        
+        // Also block duplicates: if any connection exists between these two nodes (in either direction), do nothing.
+        let duplicateExists = connections.contains { conn in
+            (conn.from == sourceID && conn.to == targetInfo.node.id) ||
+            (conn.from == targetInfo.node.id && conn.to == sourceID)
+        }
+        if duplicateExists { return }
+        
+        // Otherwise, add the connection.
+        connections.append(
+            Connection(from: sourceID,
+                       to: targetInfo.node.id,
+                       fromDot: sourceDot,
+                       toDot: targetInfo.dot)
+        )
+    }
+}
+Explanation
+Closest Target Dot Search:
+The code loops through all nodes (except the source) and their four dot positions to find the closest dot within 30 points of the drag endpoint.
+Blocking Genesis–Child Connections:
+Once a candidate target is found, we retrieve the source node. Then we check if one node is of type .genesis and the other is of type .child. If that condition holds, the function returns without creating any connection.
+Duplicate Blocking:
+Next, we check whether any connection already exists between these two nodes (in either direction). If yes, the new connection is not created.
+Creating the Connection:
+Only if both rules pass is the connection added.
+Add this snippet into your MainCanvasView’s connection handler, and it will block any connection between a Genesis Brain and a Child Node, as well as any duplicate connection.
+
+
+
+
+
+
+You said:
+write helper function that will calculate the width of the canvas and creates Nodes at the random position within the 70% percent width and height of actual canvas.
+Reasoned for 13 seconds
+Below is a helper function that, given a canvas size (as a CGSize), returns a random CGPoint within the central 70% of the canvas area. In this example, we leave a 15% margin on each side so that the node appears within 70% of the total width and height:
+
+func randomPositionWithin70Percent(of canvasSize: CGSize) -> CGPoint {
+    // Calculate margins: 15% on each side means nodes appear within the central 70%
+    let horizontalMargin = canvasSize.width * 0.15
+    let verticalMargin = canvasSize.height * 0.15
+    let randomX = CGFloat.random(in: horizontalMargin...(canvasSize.width - horizontalMargin))
+    let randomY = CGFloat.random(in: verticalMargin...(canvasSize.height - verticalMargin))
+    return CGPoint(x: randomX, y: randomY)
+}
+Usage Example
+Here's an example SwiftUI view that uses a GeometryReader to get the canvas size and then places a node (a blue circle) at a random position within the central 70% of the canvas:
+
+struct RandomNodeDemoView: View {
+    var body: some View {
+        GeometryReader { geometry in
+            let randomPosition = randomPositionWithin70Percent(of: geometry.size)
+            Circle()
+                .fill(Color.blue)
+                .frame(width: 80, height: 80)
+                .position(randomPosition)
+        }
+        .background(Color(white: 0.95))
+        .edgesIgnoringSafeArea(.all)
+    }
+}
+
+import PlaygroundSupport
+PlaygroundPage.current.setLiveView(RandomNodeDemoView())
+This helper can be used in your MainCanvasView to create nodes at random positions within the central 70% of the canvas.
+
+
+
+
+
+
+You said:
+How to integrate "randomPositionWithin70Percent" on MainCanvasView. on 1) genesisNode, 2) ParentNode and 3) Child Node.
+import SwiftUI
+
+struct MainCanvasView: View { 
+    @State private var nodes: [Node] = [] 
+    @State private var connections: [Connection] = []
+    
+    // Dropdown and modal control.
+    @State private var showDropdown = false
+    @State private var showParentModal = false
+    @State private var showChildModal = false
+    @State private var showNoParentAlert = false
+    @State private var showMaxChildAlert = false
+    
+    // Track the currently selected parent node (by its id).
+    @State private var selectedParentID: UUID? = nil
+    
+    var body: some View {
+        ZStack {
+            Color(UIColor.systemGray6)
+                .edgesIgnoringSafeArea(.all)
+            // Using double-tap as a placeholder.
+                .onTapGesture(count: 2) {
+                    withAnimation { showDropdown.toggle() }
+                }
+            
+            // Render connection curves.
+            ForEach(connections) { connection in
+                if let fromNode = nodes.first(where: { $0.id == connection.from }),
+                   let toNode = nodes.first(where: { $0.id == connection.to }) {
+                    
+                    let fromPoint = globalDotPosition(node: fromNode, dot: connection.fromDot)
+                    let toPoint   = globalDotPosition(node: toNode,   dot: connection.toDot)
+                    
+                    ConnectionView(from: fromPoint, to: toPoint)
+                }
+            }
+            
+            // Render nodes.
+            ForEach($nodes) { $node in
+                NodeView(node: $node, onSelect: {
+                    if node.type == .parent {
+                        selectedParentID = node.id
+                    }
+                }, onConnectionDragEnded: { sourceID, endPoint, sourceDot in
+                    handleConnectionDragEnd(from: sourceID, at: endPoint, sourceDot: sourceDot)
+                })
+            }
+            
+            // Dropdown overlay.
+            if showDropdown {
+                VStack {
+                    Spacer()
+                    HStack {
+                        Spacer()
+                        VStack(spacing: 10) {
+                            Button("Create Parent Node") {
+                                showParentModal = true
+                                showDropdown = false
+                            }
+                            .padding()
+                            .background(Color.blue)
+                            .foregroundColor(.white)
+                            .cornerRadius(8)
+                            
+                            Button("Create Child Node") {
+                                if let parentID = selectedParentID {
+                                    let childCount = nodes.filter { $0.parentID == parentID }.count
+                                    if childCount >= 8 {
+                                        showMaxChildAlert = true
+                                    } else {
+                                        showChildModal = true
+                                    }
+                                } else {
+                                    showNoParentAlert = true
+                                }
+                                showDropdown = false
+                            }
+                            .padding()
+                            .background(Color.green)
+                            .foregroundColor(.white)
+                            .cornerRadius(8)
+                        }
+                        .padding()
+                        Spacer()
+                    }
+                    Spacer()
+                }
+                .background(Color.black.opacity(0.4).edgesIgnoringSafeArea(.all))
+            }
+        }
+        // Present modals.
+        .sheet(isPresented: $showParentModal) {
+            ParentNodeCreationView { newNode in
+                nodes.append(newNode)
+            }
+        }
+        .sheet(isPresented: $showChildModal) {
+            ChildNodeCreationView { newChild in
+                if let parentID = selectedParentID,
+                   let index = nodes.firstIndex(where: { $0.id == parentID }) {
+                    var childNode = newChild
+                    childNode.parentID = parentID
+                    nodes.append(childNode)
+                    nodes[index].childIDs.append(childNode.id)
+                    updateParentColor(for: parentID)
+                }
+            }
+        }
+        // Alerts.
+        .alert(isPresented: $showNoParentAlert) {
+            Alert(title: Text("No Parent Selected"),
+                  message: Text("Please select a parent node by tapping it before creating a child node."),
+                  dismissButton: .default(Text("OK")))
+        }
+        .alert(isPresented: $showMaxChildAlert) {
+            Alert(title: Text("Max Child Nodes Reached"),
+                  message: Text("A parent node can have a maximum of 8 child nodes."),
+                  dismissButton: .default(Text("OK")))
+        }
+        .onAppear {
+            if !nodes.contains(where: { $0.type == .genesis }) {
+                let genesisNode = Node(title: "Genesis Brain",
+                                       type: .genesis,
+                                       position: CGPoint(x: 200, y: 50),
+                                       color: UIColor.purple)
+                nodes.append(genesisNode)
+            }
+        }
+    }
+    
+    // Updated connection drag handler that now receives a DotPosition.
+    func handleConnectionDragEnd(
+        from sourceID: UUID,
+        at endPoint: CGPoint,
+        sourceDot: DotPosition
+    ) {
+        var closestTarget: (node: Node, dot: DotPosition, distance: CGFloat)? = nil
+        
+        for target in nodes {
+            if target.id == sourceID { continue }
+            for dot in [DotPosition.top, .bottom, .left, .right] {
+                // Compute the global dot position for the target node.
+                let targetDotGlobal = globalDotPosition(node: target, dot: dot)
+                let dx = targetDotGlobal.x - endPoint.x
+                let dy = targetDotGlobal.y - endPoint.y
+                let dist = sqrt(dx*dx + dy*dy)
+                if dist < 30 {
+                    if let current = closestTarget {
+                        if dist < current.distance {
+                            closestTarget = (target, dot, dist)
+                        }
+                    } else {
+                        closestTarget = (target, dot, dist)
+                    }
+                }
+            }
+        }
+        
+        // If a target was found, check additional rules.
+        if let targetInfo = closestTarget {
+            // Get the source node.
+            guard let sourceNode = nodes.first(where: { $0.id == sourceID }) else { return }
+            
+            // BLOCK ANY CONNECTION if one node is Genesis and the other is Child.
+            if (sourceNode.type == .genesis && targetInfo.node.type == .child) ||
+                (sourceNode.type == .child && targetInfo.node.type == .genesis) {
+                // Do not create connection.
+                return
+            }
+            
+            // Also block duplicates: if any connection exists between these two nodes (in either direction), do nothing.
+            let duplicateExists = connections.contains { conn in
+                (conn.from == sourceID && conn.to == targetInfo.node.id) ||
+                (conn.from == targetInfo.node.id && conn.to == sourceID)
+            }
+            if duplicateExists { return }
+            
+            // Otherwise, add the connection.
+            connections.append(
+                Connection(from: sourceID,
+                           to: targetInfo.node.id,
+                           fromDot: sourceDot,
+                           toDot: targetInfo.dot)
+            )
+        }
+    }
+    
+    func updateParentColor(for parentID: UUID) {
+        guard let parentIndex = nodes.firstIndex(where: { $0.id == parentID }) else { return }
+        let childColors = nodes.filter { $0.parentID == parentID }.map { $0.color }
+        if !childColors.isEmpty {
+            let mixed = mixColors(colors: childColors)
+            nodes[parentIndex].color = mixed
+        } else {
+            nodes[parentIndex].color = UIColor.blue
+        }
+    }
+}
+Reasoned for 14 seconds
+Below is an updated MainCanvasView that wraps its content in a GeometryReader so that we can capture the canvas size. We then use the helper function randomPositionWithin70Percent to assign a random position (within the central 70% of the canvas) when creating a new node—whether it’s the Genesis node, a Parent node, or a Child node.
+
+Add the helper function somewhere in your file:
+
+func randomPositionWithin70Percent(of canvasSize: CGSize) -> CGPoint {
+    // Leave a 15% margin on each side, so nodes appear in the central 70%
+    let horizontalMargin = canvasSize.width * 0.15
+    let verticalMargin = canvasSize.height * 0.15
+    let randomX = CGFloat.random(in: horizontalMargin...(canvasSize.width - horizontalMargin))
+    let randomY = CGFloat.random(in: verticalMargin...(canvasSize.height - verticalMargin))
+    return CGPoint(x: randomX, y: randomY)
+}
+Then use the following updated MainCanvasView:
+
+import SwiftUI
+
+struct MainCanvasView: View { 
+    @State private var nodes: [Node] = [] 
+    @State private var connections: [Connection] = []
+    
+    // Dropdown and modal control.
+    @State private var showDropdown = false
+    @State private var showParentModal = false
+    @State private var showChildModal = false
+    @State private var showNoParentAlert = false
+    @State private var showMaxChildAlert = false
+    
+    // Track the currently selected parent node (by its id).
+    @State private var selectedParentID: UUID? = nil
+    
+    var body: some View {
+        // Wrap in a GeometryReader to capture the canvas size.
+        GeometryReader { geometry in
+            let canvasSize = geometry.size
+            ZStack {
+                Color(UIColor.systemGray6)
+                    .edgesIgnoringSafeArea(.all)
+                    // Using double-tap as a placeholder.
+                    .onTapGesture(count: 2) {
+                        withAnimation { showDropdown.toggle() }
+                    }
+                
+                // Render connection curves.
+                ForEach(connections) { connection in
+                    if let fromNode = nodes.first(where: { $0.id == connection.from }),
+                       let toNode = nodes.first(where: { $0.id == connection.to }) {
+                        
+                        let fromPoint = globalDotPosition(node: fromNode, dot: connection.fromDot)
+                        let toPoint   = globalDotPosition(node: toNode,   dot: connection.toDot)
+                        
+                        ConnectionView(from: fromPoint, to: toPoint)
+                    }
+                }
+                
+                // Render nodes.
+                ForEach($nodes) { $node in
+                    NodeView(node: $node, onSelect: {
+                        if node.type == .parent {
+                            selectedParentID = node.id
+                        }
+                    }, onConnectionDragEnded: { sourceID, endPoint, sourceDot in
+                        handleConnectionDragEnd(from: sourceID, at: endPoint, sourceDot: sourceDot)
+                    })
+                }
+                
+                // Dropdown overlay.
+                if showDropdown {
+                    VStack {
+                        Spacer()
+                        HStack {
+                            Spacer()
+                            VStack(spacing: 10) {
+                                Button("Create Parent Node") {
+                                    showParentModal = true
+                                    showDropdown = false
+                                }
+                                .padding()
+                                .background(Color.blue)
+                                .foregroundColor(.white)
+                                .cornerRadius(8)
+                                
+                                Button("Create Child Node") {
+                                    if let parentID = selectedParentID {
+                                        let childCount = nodes.filter { $0.parentID == parentID }.count
+                                        if childCount >= 8 {
+                                            showMaxChildAlert = true
+                                        } else {
+                                            showChildModal = true
+                                        }
+                                    } else {
+                                        showNoParentAlert = true
+                                    }
+                                    showDropdown = false
+                                }
+                                .padding()
+                                .background(Color.green)
+                                .foregroundColor(.white)
+                                .cornerRadius(8)
+                            }
+                            .padding()
+                            Spacer()
+                        }
+                        Spacer()
+                    }
+                    .background(Color.black.opacity(0.4).edgesIgnoringSafeArea(.all))
+                }
+            } // End of ZStack
+            
+            // Present modals.
+            .sheet(isPresented: $showParentModal) {
+                // When creating a new Parent Node, assign a random position.
+                ParentNodeCreationView { newNode in
+                    var nodeWithPosition = newNode
+                    nodeWithPosition.position = randomPositionWithin70Percent(of: canvasSize)
+                    nodes.append(nodeWithPosition)
+                }
+            }
+            .sheet(isPresented: $showChildModal) {
+                ChildNodeCreationView { newChild in
+                    if let parentID = selectedParentID,
+                       let index = nodes.firstIndex(where: { $0.id == parentID }) {
+                        var childNode = newChild
+                        childNode.parentID = parentID
+                        childNode.position = randomPositionWithin70Percent(of: canvasSize)
+                        nodes.append(childNode)
+                        nodes[index].childIDs.append(childNode.id)
+                        updateParentColor(for: parentID)
+                    }
+                }
+            }
+            // Alerts.
+            .alert(isPresented: $showNoParentAlert) {
+                Alert(title: Text("No Parent Selected"),
+                      message: Text("Please select a parent node by tapping it before creating a child node."),
+                      dismissButton: .default(Text("OK")))
+            }
+            .alert(isPresented: $showMaxChildAlert) {
+                Alert(title: Text("Max Child Nodes Reached"),
+                      message: Text("A parent node can have a maximum of 8 child nodes."),
+                      dismissButton: .default(Text("OK")))
+            }
+            .onAppear {
+                // When the view appears, add the Genesis node at a random position.
+                if !nodes.contains(where: { $0.type == .genesis }) {
+                    let genesisPosition = randomPositionWithin70Percent(of: canvasSize)
+                    let genesisNode = Node(title: "Genesis Brain",
+                                           type: .genesis,
+                                           position: genesisPosition,
+                                           color: UIColor.purple)
+                    nodes.append(genesisNode)
+                }
+            }
+        } // End of GeometryReader
+    }
+    
+    // Updated connection drag handler that now receives a DotPosition.
+    func handleConnectionDragEnd(
+        from sourceID: UUID,
+        at endPoint: CGPoint,
+        sourceDot: DotPosition
+    ) {
+        var closestTarget: (node: Node, dot: DotPosition, distance: CGFloat)? = nil
+        
+        for target in nodes {
+            if target.id == sourceID { continue }
+            for dot in [DotPosition.top, .bottom, .left, .right] {
+                // Compute the global dot position for the target node.
+                let targetDotGlobal = globalDotPosition(node: target, dot: dot)
+                let dx = targetDotGlobal.x - endPoint.x
+                let dy = targetDotGlobal.y - endPoint.y
+                let dist = sqrt(dx*dx + dy*dy)
+                if dist < 30 {
+                    if let current = closestTarget {
+                        if dist < current.distance {
+                            closestTarget = (target, dot, dist)
+                        }
+                    } else {
+                        closestTarget = (target, dot, dist)
+                    }
+                }
+            }
+        }
+        
+        // If a target was found, check additional rules.
+        if let targetInfo = closestTarget {
+            // Get the source node.
+            guard let sourceNode = nodes.first(where: { $0.id == sourceID }) else { return }
+            
+            // BLOCK ANY CONNECTION if one node is Genesis and the other is Child.
+            if (sourceNode.type == .genesis && targetInfo.node.type == .child) ||
+                (sourceNode.type == .child && targetInfo.node.type == .genesis) {
+                return
+            }
+            
+            // Also block duplicates: if any connection exists between these two nodes (in either direction), do nothing.
+            let duplicateExists = connections.contains { conn in
+                (conn.from == sourceID && conn.to == targetInfo.node.id) ||
+                (conn.from == targetInfo.node.id && conn.to == sourceID)
+            }
+            if duplicateExists { return }
+            
+            // Otherwise, add the connection.
+            connections.append(
+                Connection(from: sourceID,
+                           to: targetInfo.node.id,
+                           fromDot: sourceDot,
+                           toDot: targetInfo.dot)
+            )
+        }
+    }
+    
+    func updateParentColor(for parentID: UUID) {
+        guard let parentIndex = nodes.firstIndex(where: { $0.id == parentID }) else { return }
+        let childColors = nodes.filter { $0.parentID == parentID }.map { $0.color }
+        if !childColors.isEmpty {
+            let mixed = mixColors(colors: childColors)
+            nodes[parentIndex].color = mixed
+        } else {
+            nodes[parentIndex].color = UIColor.blue
+        }
+    }
+}
+Explanation
+GeometryReader & Canvas Size:
+The entire canvas is wrapped in a GeometryReader. We capture the canvas size as geometry.size (here stored in the local variable canvasSize).
+Random Position Helper:
+When creating a new node (Genesis, Parent, or Child), we call:
+randomPositionWithin70Percent(of: canvasSize)
+This ensures that the node’s position is randomly assigned within the central 70% of the canvas.
+Genesis Node:
+In the .onAppear block, if no Genesis node exists, one is created at a random position.
+Parent & Child Nodes:
+In the modals’ closures (for Parent and Child creation), we update the new node’s position property to a random point using the same helper.
+With these updates, your MainCanvasView now creates nodes at random positions (within the central 70% of the canvas) for Genesis, Parent, and Child nodes.
+
+
+
+
+
+
+You said:
+how to add zoom in and zoom out functionality in swift playground. like flexible figma like canvas.
+Reasoned for a couple of seconds
+You can add zoom (pinch) functionality using SwiftUI’s MagnificationGesture. A common approach is to create a reusable wrapper view (often called a ZoomableView) that applies a scale effect to its child content. For example, try the following code snippet:
+
+import SwiftUI
+
+struct ZoomableView<Content: View>: View {
+    @GestureState private var gestureScale: CGFloat = 1.0
+    @State private var currentScale: CGFloat = 1.0
+    let content: Content
+
+    init(@ViewBuilder content: () -> Content) {
+        self.content = content()
+    }
+
+    var body: some View {
+        content
+            .scaleEffect(currentScale * gestureScale)
+            .gesture(
+                MagnificationGesture()
+                    .updating($gestureScale) { latestGestureScale, state, _ in
+                        state = latestGestureScale
+                    }
+                    .onEnded { finalGestureScale in
+                        currentScale *= finalGestureScale
+                    }
+            )
+    }
+}
+How It Works
+MagnificationGesture:
+This gesture tracks pinch gestures. The gestureScale (a GestureState) reflects the ongoing scale factor, while currentScale holds the accumulated scale value.
+scaleEffect:
+The view’s scale is modified by multiplying currentScale by the current gesture’s scale, so the content smoothly zooms in and out.
+Reusable Wrapper:
+You can wrap any view with ZoomableView to add zooming functionality.
+Usage Example
+To add zooming to your canvas, simply wrap your MainCanvasView (or any other content) with ZoomableView:
+
+struct ContentView: View {
+    var body: some View {
+        ZoomableView {
+            MainCanvasView()
+        }
+    }
+}
+
+import PlaygroundSupport
+PlaygroundPage.current.setLiveView(ContentView())
+This will give your canvas a Figma-like flexible zoom in/out behavior. Feel free to adjust the code to suit your needs!
+
+
+
+
+
+
+You said:
+Great!!
+
+The next steps following:
+0. On double click Parent Node or Child Node it will show window with all the todo details with editable access.
+1. We should write helper function that will calculate the new color for Nodes. in general color will move from light to dark. We have max 8 Child nodes for each Parent node. Use these [Color palette].
+Note that: 
+Parent Node color only depends on their Child Node and only can be adjusted according to Child Nodes. Child Node color depends on its own deadline. And as soon as deadline approaches for Child Node it becomes black and black. Synchronically it affects its Parent Node.
+Calculations should be fully autonomous.
+3. On the deadline we should also add timing. Then for color calculations we should convert to the seconds. And calculate timing in real time and update colors in real time.
+4. Example: for testing purposes I will create one Parent Node and three Child Nodes. Then put deadline 2 hours for Parent Node and 20 minutes for Child Node1, 40 minutes for  Child Node2 and 60 minutes for  Child Node3. So I can see the changes in update colors in real time.
+
+[Color palette]:
+--gray-950: #030712;
+    --gray-900: #111827;
+    --gray-800: #1f2937;
+    --gray-700: #374151;
+    --gray-600: #4b5563;
+    --gray-500: #6b7280;
+    --gray-400: #9ca3af;
+    --gray-300: #d1d5db;
+    --gray-200: #e5e7eb;
+    --gray-100: #f3f4f6;
+    --gray-50: #f9fafb;
+Reasoned for 54 seconds
+Below is a complete code example that integrates the following features into your MainCanvasView:
+
+• When you double‑click (tap twice) on a Parent or Child Node, a detail modal appears that shows that node’s to‑do details in an editable form.
+• A helper function calculates a Child Node’s color based on its deadline. The function uses a gray‑scale palette (from light to dark) so that as the deadline approaches, the Child’s color darkens.
+• A Timer (firing every second) updates Child Node colors in real time (and then recalculates the Parent Node’s color as the mix of its children).
+• For Parents, their color is automatically computed as the mix (average) of the current colors of all its Child Nodes.
+
+Below you’ll find the code. (For brevity, I show only the parts that change or are added. You can integrate these into your existing project.)
+
+import SwiftUI
+import Combine
+import PlaygroundSupport
+
+// MARK: - UIColor Extension for Hex Initialization
+
+extension UIColor {
+    convenience init(hex: String) {
+        var hexSanitized = hex.trimmingCharacters(in: .whitespacesAndNewlines)
+        hexSanitized = hexSanitized.replacingOccurrences(of: "#", with: "")
+        var rgb: UInt64 = 0
+        Scanner(string: hexSanitized).scanHexInt64(&rgb)
+        let r = CGFloat((rgb >> 16) & 0xFF) / 255.0
+        let g = CGFloat((rgb >> 8) & 0xFF) / 255.0
+        let b = CGFloat(rgb & 0xFF) / 255.0
+        self.init(red: r, green: g, blue: b, alpha: 1.0)
+    }
+}
+
+// MARK: - Node Model
+
+enum NodeType {
+    case genesis, parent, child
+}
+
+enum DotPosition {
+    case top, bottom, left, right
+}
+
+struct Node: Identifiable {
+    let id = UUID()
+    var title: String
+    var description: String = ""
+    var deadline: Date = Date()
+    var status: String = ""
+    var type: NodeType
+    /// IMPORTANT: Here, position represents the CENTER of the node.
+    var position: CGPoint
+    var color: UIColor
+    var childIDs: [UUID] = []
+    var parentID: UUID? = nil
+    /// For child nodes, we record the creation time so we know the total duration.
+    var creationDate: Date? = nil
+}
+
+struct Connection: Identifiable {
+    let id = UUID()
+    let from: UUID   // parent's id
+    let to: UUID     // child's id
+    let fromDot: DotPosition
+    let toDot: DotPosition
+}
+
+// MARK: - Color Helpers
+
+// Our gray-scale palette from light to dark.
+let grayPaletteHex = [
+    "f9fafb", // gray-50 (lightest)
+    "f3f4f6", // gray-100
+    "e5e7eb", // gray-200
+    "d1d5db", // gray-300
+    "9ca3af", // gray-400
+    "6b7280", // gray-500
+    "4b5563", // gray-600
+    "374151", // gray-700
+    "1f2937", // gray-800
+    "111827", // gray-900
+    "030712"  // gray-950 (darkest)
+]
+let grayPalette: [UIColor] = grayPaletteHex.map { UIColor(hex: $0) }
+
+/// Calculates the color for a Child Node based on its deadline.
+/// - Parameters:
+///   - totalDuration: The total duration in seconds from creation to deadline.
+///   - timeRemaining: The current time remaining (in seconds) until deadline.
+/// - Returns: A UIColor from the palette, where full time remaining yields a light color,
+///            and zero (or negative) time remaining yields the darkest color.
+func childColor(totalDuration: TimeInterval, timeRemaining: TimeInterval) -> UIColor {
+    // Clamp ratio between 0 and 1.
+    let ratio = max(0, min(1, timeRemaining / totalDuration))
+    // When ratio==1 (freshly created), use the lightest color (index 0).
+    // When ratio==0 (deadline reached), use the darkest color (last index).
+    let indexFloat = (1 - ratio) * Double(grayPalette.count - 1)
+    let index = Int(round(indexFloat))
+    return grayPalette[index]
+}
+
+/// Mix an array of UIColors by averaging their RGBA components.
+func mixColors(colors: [UIColor]) -> UIColor {
+    guard !colors.isEmpty else { return UIColor.blue }
+    var totalR: CGFloat = 0, totalG: CGFloat = 0, totalB: CGFloat = 0, totalA: CGFloat = 0
+    for color in colors {
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        color.getRed(&r, green: &g, blue: &b, alpha: &a)
+        totalR += r
+        totalG += g
+        totalB += b
+        totalA += a
+    }
+    let count = CGFloat(colors.count)
+    return UIColor(red: totalR/count, green: totalG/count, blue: totalB/count, alpha: totalA/count)
+}
+
+// MARK: - Dot Position Helpers
+
+/// Returns the local offset (from the center) for a given dot on a node.
+func localDotOffset(nodeType: NodeType, dot: DotPosition) -> CGPoint {
+    // Use the node's diameter.
+    let size: CGFloat = (nodeType == .parent) ? 120 : 80
+    switch dot {
+    case .top:
+        return CGPoint(x: 0, y: -size/2)
+    case .bottom:
+        return CGPoint(x: 0, y: size/2)
+    case .left:
+        return CGPoint(x: -size/2, y: 0)
+    case .right:
+        return CGPoint(x: size/2, y: 0)
+    }
+}
+
+/// Computes the global (screen) position of a dot on a node.
+/// Since node.position is the CENTER, add the local offset.
+func globalDotPosition(node: Node, dot: DotPosition) -> CGPoint {
+    let offset = localDotOffset(nodeType: node.type, dot: dot)
+    return CGPoint(x: node.position.x + offset.x,
+                   y: node.position.y + offset.y)
+}
+
+// MARK: - Views
+
+// Connection line view.
+struct ConnectionView: View {
+    var from: CGPoint
+    var to: CGPoint
+    var body: some View {
+        Path { path in
+            path.move(to: from)
+            let control = CGPoint(x: (from.x + to.x) / 2, y: (from.y + to.y) / 2)
+            path.addQuadCurve(to: to, control: control)
+        }
+        .stroke(Color.gray, lineWidth: 2)
+    }
+}
+
+// A connection dot shown on nodes.
+struct ConnectionDotView: View {
+    var node: Node
+    var dot: DotPosition
+    var onDragEnded: ((UUID, CGPoint, DotPosition) -> Void)? = nil
+    
+    var body: some View {
+        // In the node’s local coordinate space (centered at (diameter/2, diameter/2))
+        let size: CGFloat = (node.type == .parent) ? 120 : 80
+        let localOffset = localDotOffset(nodeType: node.type, dot: dot)
+        let dotPos = CGPoint(x: size/2 + localOffset.x, y: size/2 + localOffset.y)
+        
+        return Circle()
+            .fill(Color.white)
+            .frame(width: 10, height: 10)
+            .position(dotPos)
+            .gesture(
+                DragGesture().onEnded { value in
+                    let startGlobal = globalDotPosition(node: node, dot: dot)
+                    let endGlobal = CGPoint(x: startGlobal.x + value.translation.width,
+                                            y: startGlobal.y + value.translation.height)
+                    onDragEnded?(node.id, endGlobal, dot)
+                }
+            )
+    }
+}
+
+// Node view with drag and long press (to show dots) and double tap (to show detail).
+struct NodeView: View {
+    @Binding var node: Node
+    var onSelect: (() -> Void)? = nil
+    var onConnectionDragEnded: ((UUID, CGPoint, DotPosition) -> Void)? = nil
+    var onDoubleTap: ((Node) -> Void)? = nil  // Detail editing
+    
+    @State private var dragOffset: CGSize = .zero
+    @State private var showConnectionDots = false
+    
+    var size: CGFloat {
+        node.type == .parent ? 120 : 80
+    }
+    
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(Color(node.color))
+                .frame(width: size, height: size)
+            Text(node.title)
+                .foregroundColor(.white)
+                .font(node.type == .parent ? .headline : .subheadline)
+        }
+        .overlay(
+            Group {
+                if showConnectionDots {
+                    ConnectionDotView(node: node, dot: .top, onDragEnded: onConnectionDragEnded)
+                    ConnectionDotView(node: node, dot: .bottom, onDragEnded: onConnectionDragEnded)
+                    ConnectionDotView(node: node, dot: .left, onDragEnded: onConnectionDragEnded)
+                    ConnectionDotView(node: node, dot: .right, onDragEnded: onConnectionDragEnded)
+                }
+            }
+        )
+        // Use .position so node.position is the center.
+        .position(x: node.position.x + dragOffset.width,
+                  y: node.position.y + dragOffset.height)
+        .gesture(
+            DragGesture()
+                .onChanged { value in
+                    dragOffset = value.translation
+                }
+                .onEnded { value in
+                    node.position.x += value.translation.width
+                    node.position.y += value.translation.height
+                    dragOffset = .zero
+                }
+        )
+        .simultaneousGesture(
+            TapGesture(count: 1).onEnded {
+                if node.type == .parent {
+                    onSelect?()
+                }
+            }
+        )
+        .onTapGesture(count: 2) {
+            // Double tap: show editable detail modal.
+            onDoubleTap?(node)
+        }
+        .gesture(
+            LongPressGesture(minimumDuration: 1)
+                .onEnded { _ in
+                    withAnimation { showConnectionDots.toggle() }
+                }
+        )
+    }
+}
+
+// Detail view for editing a Node's details.
+struct TodoDetailView: View {
+    @Binding var node: Node
+    @Environment(\.presentationMode) var presentationMode
+    
+    var body: some View {
+        NavigationView {
+            Form {
+                TextField("Title", text: $node.title)
+                TextField("Description", text: $node.description)
+                DatePicker("Deadline", selection: $node.deadline, displayedComponents: [.date, .hourAndMinute])
+                TextField("Status", text: $node.status)
+            }
+            .navigationBarTitle("Edit Todo", displayMode: .inline)
+            .navigationBarItems(trailing: Button("Done") {
+                presentationMode.wrappedValue.dismiss()
+            })
+        }
+    }
+}
+
+// MARK: - MainCanvasView with Real-Time Color Updates
+
+struct MainCanvasView: View { 
+    @State private var nodes: [Node] = [] 
+    @State private var connections: [Connection] = []
+    
+    // Dropdown and modal control.
+    @State private var showDropdown = false
+    @State private var showParentModal = false
+    @State private var showChildModal = false
+    @State private var showNoParentAlert = false
+    @State private var showMaxChildAlert = false
+    
+    // For detail editing.
+    @State private var selectedNodeForDetail: Node? = nil
+    
+    // Track the currently selected parent node (by its id) for creating children.
+    @State private var selectedParentID: UUID? = nil
+    
+    // Timer for updating colors in real time.
+    let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+    
+    var body: some View {
+        GeometryReader { geometry in
+            let canvasSize = geometry.size
+            ZStack {
+                Color(UIColor.systemGray6)
+                    .edgesIgnoringSafeArea(.all)
+                    .onTapGesture(count: 2) {
+                        withAnimation { showDropdown.toggle() }
+                    }
+                
+                // Render connection curves.
+                ForEach(connections) { connection in
+                    if let fromNode = nodes.first(where: { $0.id == connection.from }),
+                       let toNode = nodes.first(where: { $0.id == connection.to }) {
+                        
+                        let fromPoint = globalDotPosition(node: fromNode, dot: connection.fromDot)
+                        let toPoint   = globalDotPosition(node: toNode,   dot: connection.toDot)
+                        
+                        ConnectionView(from: fromPoint, to: toPoint)
+                    }
+                }
+                
+                // Render nodes.
+                ForEach($nodes) { $node in
+                    NodeView(node: $node, onSelect: {
+                        if node.type == .parent {
+                            selectedParentID = node.id
+                        }
+                    }, onConnectionDragEnded: { sourceID, endPoint, sourceDot in
+                        handleConnectionDragEnd(from: sourceID, at: endPoint, sourceDot: sourceDot)
+                    }, onDoubleTap: { tappedNode in
+                        // Open detail modal for editing.
+                        selectedNodeForDetail = tappedNode
+                    })
+                }
+                
+                // Dropdown overlay.
+                if showDropdown {
+                    VStack {
+                        Spacer()
+                        HStack {
+                            Spacer()
+                            VStack(spacing: 10) {
+                                Button("Create Parent Node") {
+                                    showParentModal = true
+                                    showDropdown = false
+                                }
+                                .padding()
+                                .background(Color.blue)
+                                .foregroundColor(.white)
+                                .cornerRadius(8)
+                                
+                                Button("Create Child Node") {
+                                    if let parentID = selectedParentID {
+                                        let childCount = nodes.filter { $0.parentID == parentID }.count
+                                        if childCount >= 8 {
+                                            showMaxChildAlert = true
+                                        } else {
+                                            showChildModal = true
+                                        }
+                                    } else {
+                                        showNoParentAlert = true
+                                    }
+                                    showDropdown = false
+                                }
+                                .padding()
+                                .background(Color.green)
+                                .foregroundColor(.white)
+                                .cornerRadius(8)
+                            }
+                            .padding()
+                            Spacer()
+                        }
+                        Spacer()
+                    }
+                    .background(Color.black.opacity(0.4).edgesIgnoringSafeArea(.all))
+                }
+            } // End of ZStack
+            
+            // Modals for creating Parent and Child Nodes.
+            .sheet(isPresented: $showParentModal) {
+                ParentNodeCreationView { newNode in
+                    var nodeWithPosition = newNode
+                    nodeWithPosition.position = randomPositionWithin70Percent(of: canvasSize)
+                    nodes.append(nodeWithPosition)
+                }
+            }
+            .sheet(isPresented: $showChildModal) {
+                ChildNodeCreationView { newChild in
+                    if let parentID = selectedParentID,
+                       let index = nodes.firstIndex(where: { $0.id == parentID }) {
+                        var childNode = newChild
+                        childNode.parentID = parentID
+                        childNode.creationDate = Date() // record creation time
+                        childNode.position = randomPositionWithin70Percent(of: canvasSize)
+                        nodes.append(childNode)
+                        nodes[index].childIDs.append(childNode.id)
+                        updateParentColor(for: parentID)
+                    }
+                }
+            }
+            // Modal for editing details.
+            .sheet(item: $selectedNodeForDetail) { nodeBinding in
+                // Pass a binding to the selected node.
+                if let index = nodes.firstIndex(where: { $0.id == nodeBinding.id }) {
+                    TodoDetailView(node: $nodes[index])
+                }
+            }
+            // Alerts.
+            .alert(isPresented: $showNoParentAlert) {
+                Alert(title: Text("No Parent Selected"),
+                      message: Text("Please select a parent node by tapping it before creating a child node."),
+                      dismissButton: .default(Text("OK")))
+            }
+            .alert(isPresented: $showMaxChildAlert) {
+                Alert(title: Text("Max Child Nodes Reached"),
+                      message: Text("A parent node can have a maximum of 8 child nodes."),
+                      dismissButton: .default(Text("OK")))
+            }
+            // On appear: Create Genesis node if needed.
+            .onAppear {
+                if !nodes.contains(where: { $0.type == .genesis }) {
+                    let genesisPos = randomPositionWithin70Percent(of: canvasSize)
+                    let genesisNode = Node(title: "Genesis Brain",
+                                           type: .genesis,
+                                           position: genesisPos,
+                                           color: UIColor.purple)
+                    nodes.append(genesisNode)
+                }
+            }
+            // Timer to update child node colors and then parent colors in real time.
+            .onReceive(timer) { _ in
+                let now = Date()
+                for i in nodes.indices {
+                    if nodes[i].type == .child, let created = nodes[i].creationDate {
+                        let totalDuration = nodes[i].deadline.timeIntervalSince(created)
+                        let timeRemaining = nodes[i].deadline.timeIntervalSince(now)
+                        nodes[i].color = childColor(totalDuration: totalDuration, timeRemaining: timeRemaining)
+                    }
+                }
+                // Update parent's color based on current child colors.
+                let parentIDs = Set(nodes.filter { $0.type == .parent }.map { $0.id })
+                for parentID in parentIDs {
+                    updateParentColor(for: parentID)
+                }
+            }
+        } // End of GeometryReader
+    }
+    
+    // Connection drag handler (unchanged from previous version).
+    func handleConnectionDragEnd(
+        from sourceID: UUID,
+        at endPoint: CGPoint,
+        sourceDot: DotPosition
+    ) {
+        var closestTarget: (node: Node, dot: DotPosition, distance: CGFloat)? = nil
+        
+        for target in nodes {
+            if target.id == sourceID { continue }
+            for dot in [DotPosition.top, .bottom, .left, .right] {
+                let targetDotGlobal = globalDotPosition(node: target, dot: dot)
+                let dx = targetDotGlobal.x - endPoint.x
+                let dy = targetDotGlobal.y - endPoint.y
+                let dist = sqrt(dx*dx + dy*dy)
+                if dist < 30 {
+                    if let current = closestTarget {
+                        if dist < current.distance {
+                            closestTarget = (target, dot, dist)
+                        }
+                    } else {
+                        closestTarget = (target, dot, dist)
+                    }
+                }
+            }
+        }
+        
+        if let targetInfo = closestTarget {
+            guard let sourceNode = nodes.first(where: { $0.id == sourceID }) else { return }
+            if (sourceNode.type == .genesis && targetInfo.node.type == .child) ||
+                (sourceNode.type == .child && targetInfo.node.type == .genesis) {
+                return
+            }
+            let duplicateExists = connections.contains { conn in
+                (conn.from == sourceID && conn.to == targetInfo.node.id) ||
+                (conn.from == targetInfo.node.id && conn.to == sourceID)
+            }
+            if duplicateExists { return }
+            
+            connections.append(
+                Connection(from: sourceID,
+                           to: targetInfo.node.id,
+                           fromDot: sourceDot,
+                           toDot: targetInfo.dot)
+            )
+        }
+    }
+    
+    func updateParentColor(for parentID: UUID) {
+        guard let parentIndex = nodes.firstIndex(where: { $0.id == parentID }) else { return }
+        let childColors = nodes.filter { $0.parentID == parentID }.map { $0.color }
+        if !childColors.isEmpty {
+            let mixed = mixColors(colors: childColors)
+            nodes[parentIndex].color = mixed
+        } else {
+            nodes[parentIndex].color = UIColor.blue
+        }
+    }
+}
+
+/// Returns a random CGPoint within the central 70% of the given canvas.
+func randomPositionWithin70Percent(of canvasSize: CGSize) -> CGPoint {
+    let horizontalMargin = canvasSize.width * 0.15
+    let verticalMargin = canvasSize.height * 0.15
+    let randomX = CGFloat.random(in: horizontalMargin...(canvasSize.width - horizontalMargin))
+    let randomY = CGFloat.random(in: verticalMargin...(canvasSize.height - verticalMargin))
+    return CGPoint(x: randomX, y: randomY)
+}
+Explanation
+Editable Details on Double Tap:
+In NodeView, a double‑tap (count: 2) now triggers the onDoubleTap callback. In MainCanvasView, this callback sets the selected node (using a state variable) and presents a TodoDetailView modal where you can edit details (title, description, deadline, status).
+Child Node Color Calculation:
+The helper function childColor(totalDuration:timeRemaining:) (using the gray palette defined above) computes a color based on the ratio of time remaining (deadline minus current time) to the total duration (deadline minus creation time). As time decreases, the child’s color moves toward the darkest value.
+The Timer (using .onReceive(timer)) updates each child’s color every second, and then calls updateParentColor(for:) for each parent.
+Parent Node Color Calculation:
+For each parent, its color is computed by averaging (mixing) the current colors of all its child nodes via the mixColors(colors:) helper.
+Random Positioning:
+When creating a new node (Genesis, Parent, or Child), we assign a random position within the central 70% of the canvas using randomPositionWithin70Percent(of:).
+You can now test by creating one Parent Node (with a 2‑hour deadline) and three Child Nodes (with deadlines of 20, 40, and 60 minutes). As time advances, you should see the Child Node colors darken in real time and the Parent Node’s color update accordingly.
+
+Feel free to adjust the palette or timing logic as needed for your project!
+
+
+
+
+
+
+You said:
+1) I think we should update them with time selection also. 
+2) in NodeView foregroundColor should be opposite of Node color.
+
+-----
+import SwiftUI
+
+struct ChildNodeCreationView: View { 
+    @Environment(\.presentationMode) var presentationMode 
+    @State private var title: String = "" 
+    @State private var description: String = "" 
+    @State private var deadline: Date = Date() 
+    @State private var status: String = "important"
+    // Child nodes will start with a default light sky color.
+    var onCreate: (Node) -> Void
+    
+    var body: some View {
+        NavigationView {
+            Form {
+                TextField("Title", text: $title)
+                TextField("Description", text: $description)
+                DatePicker("Deadline", selection: $deadline, displayedComponents: .date)
+                TextField("Status", text: $status)
+            }
+            .navigationBarTitle("Create Child Node", displayMode: .inline)
+            .navigationBarItems(leading: Button("Cancel") {
+                presentationMode.wrappedValue.dismiss()
+            })
+            .navigationBarItems(trailing: Button("Create") {
+                // Use a custom light sky color.
+                let lightSky = UIColor(red: 135/255, green: 206/255, blue: 250/255, alpha: 1)
+                let newNode = Node(title: title,
+                                   description: description,
+                                   deadline: deadline, 
+                                   status: status, 
+                                   type: .child,
+                                   position: CGPoint(x: 150, y: 300),
+                                   color: lightSky)
+                onCreate(newNode)
+                presentationMode.wrappedValue.dismiss()
+            })
+        }
+    }
+}
+
+-------
+import SwiftUI
+
+struct ParentNodeCreationView: View { 
+    @Environment(\.presentationMode) var presentationMode 
+    @State private var title: String = "" 
+    @State private var deadline: Date = Date()
+    // Parent nodes start with a default blue.
+    var onCreate: (Node) -> Void
+    
+    var body: some View {
+        NavigationView {
+            Form {
+                TextField("Title", text: $title)
+                DatePicker("Deadline", selection: $deadline, displayedComponents: .date)
+            }
+            .navigationBarTitle("Create Parent Node", displayMode: .inline)
+            .navigationBarItems(leading: Button("Cancel") {
+                presentationMode.wrappedValue.dismiss()
+            })
+            .navigationBarItems(trailing: Button("Create") {
+                let newNode = Node(title: title,
+                                   deadline: deadline, 
+                                   type: .parent,
+                                   position: CGPoint(x: 150, y: 300),
+                                   color: UIColor.blue)
+                onCreate(newNode)
+                presentationMode.wrappedValue.dismiss()
+            })
+        }
+    }
+}
+
+----
+struct NodeView: View {
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(Color(node.color))
+                .frame(width: size, height: size)
+            Text(node.title)
+                .foregroundColor(.white)
+                .font(node.type == .parent ? .headline : .subheadline)
+        }
+-------
+Reasoned for 25 seconds
+Below are the updated code snippets. We’ve made two changes:
+
+In both the Child and Parent creation views we now use a DatePicker that lets the user select both date and time.
+In NodeView we compute a contrasting text color based on the node’s background color so that the text is clearly visible (e.g. if the node’s color is dark, the text becomes light, and vice‐versa).
+Helper for Contrasting Color
+func contrastingColor(for color: UIColor) -> Color {
+    var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0, alpha: CGFloat = 0
+    color.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
+    // Compute luminance using the standard formula.
+    let luminance = 0.299 * red + 0.587 * green + 0.114 * blue
+    return luminance < 0.5 ? Color.white : Color.black
+}
+Updated ChildNodeCreationView
+import SwiftUI
+
+struct ChildNodeCreationView: View { 
+    @Environment(\.presentationMode) var presentationMode 
+    @State private var title: String = "" 
+    @State private var description: String = "" 
+    @State private var deadline: Date = Date() 
+    @State private var status: String = "important"
+    // Child nodes will start with a default light sky color.
+    var onCreate: (Node) -> Void
+    
+    var body: some View {
+        NavigationView {
+            Form {
+                TextField("Title", text: $title)
+                TextField("Description", text: $description)
+                // DatePicker now includes time selection.
+                DatePicker("Deadline", selection: $deadline, displayedComponents: [.date, .hourAndMinute])
+                TextField("Status", text: $status)
+            }
+            .navigationBarTitle("Create Child Node", displayMode: .inline)
+            .navigationBarItems(leading: Button("Cancel") {
+                presentationMode.wrappedValue.dismiss()
+            }, trailing: Button("Create") {
+                // Use a custom light sky color.
+                let lightSky = UIColor(red: 135/255, green: 206/255, blue: 250/255, alpha: 1)
+                let newNode = Node(title: title,
+                                   description: description,
+                                   deadline: deadline, 
+                                   status: status, 
+                                   type: .child,
+                                   position: CGPoint(x: 150, y: 300),
+                                   color: lightSky)
+                onCreate(newNode)
+                presentationMode.wrappedValue.dismiss()
+            })
+        }
+    }
+}
+Updated ParentNodeCreationView
+import SwiftUI
+
+struct ParentNodeCreationView: View { 
+    @Environment(\.presentationMode) var presentationMode 
+    @State private var title: String = "" 
+    @State private var deadline: Date = Date()
+    // Parent nodes start with a default blue.
+    var onCreate: (Node) -> Void
+    
+    var body: some View {
+        NavigationView {
+            Form {
+                TextField("Title", text: $title)
+                // DatePicker now includes time selection.
+                DatePicker("Deadline", selection: $deadline, displayedComponents: [.date, .hourAndMinute])
+            }
+            .navigationBarTitle("Create Parent Node", displayMode: .inline)
+            .navigationBarItems(leading: Button("Cancel") {
+                presentationMode.wrappedValue.dismiss()
+            }, trailing: Button("Create") {
+                let newNode = Node(title: title,
+                                   deadline: deadline, 
+                                   type: .parent,
+                                   position: CGPoint(x: 150, y: 300),
+                                   color: UIColor.blue)
+                onCreate(newNode)
+                presentationMode.wrappedValue.dismiss()
+            })
+        }
+    }
+}
+Updated NodeView
+In NodeView the text color is now determined by the helper contrastingColor(for:) so it’s the “opposite” of the node’s background.
+
+import SwiftUI
+
+struct NodeView: View {
+    @Binding var node: Node 
+    var onSelect: (() -> Void)? = nil 
+    var onConnectionDragEnded: ((UUID, CGPoint, DotPosition) -> Void)? = nil 
+    var onDoubleTap: ((Node) -> Void)? = nil  // For showing details.
+    
+    @State private var dragOffset: CGSize = .zero
+    @State private var showConnectionDots = false
+    
+    var size: CGFloat {
+        node.type == .parent ? 120 : 80
+    }
+    
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(Color(node.color))
+                .frame(width: size, height: size)
+            Text(node.title)
+                // Set text color to be the contrasting (opposite) color.
+                .foregroundColor(contrastingColor(for: node.color))
+                .font(node.type == .parent ? .headline : .subheadline)
+        }
+        .overlay(
+            Group {
+                if showConnectionDots {
+                    ConnectionDotView(node: node, dot: .top, onDragEnded: onConnectionDragEnded)
+                    ConnectionDotView(node: node, dot: .bottom, onDragEnded: onConnectionDragEnded)
+                    ConnectionDotView(node: node, dot: .left, onDragEnded: onConnectionDragEnded)
+                    ConnectionDotView(node: node, dot: .right, onDragEnded: onConnectionDragEnded)
+                }
+            }
+        )
+        // Use .position so that node.position represents the CENTER.
+        .position(x: node.position.x + dragOffset.width,
+                  y: node.position.y + dragOffset.height)
+        .gesture(
+            DragGesture()
+                .onChanged { value in
+                    dragOffset = value.translation
+                }
+                .onEnded { value in
+                    node.position.x += value.translation.width
+                    node.position.y += value.translation.height
+                    dragOffset = .zero
+                }
+        )
+        .simultaneousGesture(
+            TapGesture(count: 1).onEnded {
+                if node.type == .parent {
+                    onSelect?()
+                }
+            }
+        )
+        .onTapGesture(count: 2) {
+            // Double-tap opens the detail modal for editing.
+            onDoubleTap?(node)
+        }
+        .gesture(
+            LongPressGesture(minimumDuration: 1)
+                .onEnded { _ in
+                    withAnimation { showConnectionDots.toggle() }
+                }
+        )
+    }
+}
+Summary
+The ChildNodeCreationView and ParentNodeCreationView now include both date and time in their DatePickers.
+The NodeView uses the helper function contrastingColor(for:) to determine the foreground color based on the node’s background color.
+Integrate these updated snippets into your project, and you’ll have the desired behavior. Let me know if you need any further adjustments!

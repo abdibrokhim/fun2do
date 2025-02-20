@@ -11,7 +11,7 @@ struct ParentNodeCreationView: View {
         NavigationView {
             Form {
                 TextField("Title", text: $title)
-                DatePicker("Deadline", selection: $deadline, displayedComponents: .date)
+                DatePicker("Deadline", selection: $deadline, displayedComponents: [.date, .hourAndMinute])
             }
             .navigationBarTitle("Create Parent Node", displayMode: .inline)
             .navigationBarItems(leading: Button("Cancel") {

@@ -13,4 +13,6 @@ struct Node: Identifiable {
     var color: UIColor
     var childIDs: [UUID] = []
     var parentID: UUID? = nil
+    /// For child nodes, we record the creation time so we know the total duration.
+    var creationDate: Date? = nil
 }

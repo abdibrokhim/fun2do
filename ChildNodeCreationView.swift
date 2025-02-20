@@ -14,7 +14,7 @@ struct ChildNodeCreationView: View {
             Form {
                 TextField("Title", text: $title)
                 TextField("Description", text: $description)
-                DatePicker("Deadline", selection: $deadline, displayedComponents: .date)
+                DatePicker("Deadline", selection: $deadline, displayedComponents: [.date, .hourAndMinute])
                 TextField("Status", text: $status)
             }
             .navigationBarTitle("Create Child Node", displayMode: .inline)
