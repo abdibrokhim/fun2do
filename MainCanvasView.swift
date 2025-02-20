@@ -156,21 +156,32 @@ struct MainCanvasView: View {
             }
         }
         
+        // If a target was found, check additional rules.
         if let targetInfo = closestTarget {
-            // Check for duplicate connections (regardless of dot positions)
+            // Get the source node.
+            guard let sourceNode = nodes.first(where: { $0.id == sourceID }) else { return }
+            
+            // BLOCK ANY CONNECTION if one node is Genesis and the other is Child.
+            if (sourceNode.type == .genesis && targetInfo.node.type == .child) ||
+                (sourceNode.type == .child && targetInfo.node.type == .genesis) {
+                // Do not create connection.
+                return
+            }
+            
+            // Also block duplicates: if any connection exists between these two nodes (in either direction), do nothing.
             let duplicateExists = connections.contains { conn in
                 (conn.from == sourceID && conn.to == targetInfo.node.id) ||
                 (conn.from == targetInfo.node.id && conn.to == sourceID)
             }
+            if duplicateExists { return }
             
-            if !duplicateExists {
-                connections.append(
-                    Connection(from: sourceID,
-                               to: targetInfo.node.id,
-                               fromDot: sourceDot,
-                               toDot: targetInfo.dot)
-                )
-            }
+            // Otherwise, add the connection.
+            connections.append(
+                Connection(from: sourceID,
+                           to: targetInfo.node.id,
+                           fromDot: sourceDot,
+                           toDot: targetInfo.dot)
+            )
         }
     }
     

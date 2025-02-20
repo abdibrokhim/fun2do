@@ -76,3 +76,12 @@ func globalDotPosition(node: Node, dot: DotPosition) -> CGPoint {
     let offset = localDotOffset(nodeType: node.type, dot: dot)
     return CGPoint(x: node.position.x + offset.x, y: node.position.y + offset.y)
 }
+
+// Helper function to check if a connection already exists between two node IDs.
+func canCreateConnectionBetween(_ id1: UUID, _ id2: UUID, in connections: [Connection]) -> Bool {
+    // Returns true only if no connection exists in either direction.
+    return !connections.contains { connection in
+        (connection.from == id1 && connection.to == id2) ||
+        (connection.from == id2 && connection.to == id1)
+    }
+}
