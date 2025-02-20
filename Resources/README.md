@@ -18,3 +18,13 @@ feat: enhance node interactions and dynamic color calculations
   - Update ChildNodeCreationView and ParentNodeCreationView with combined DatePickers
 - Enhance text visibility with contrast color calculation
   - Integrate contrastingColor() helper in NodeView for foreground colors
+
+### Demos
+
+on desktop:
+
+https://github.com/user-attachments/assets/697d3d40-fc18-4d68-a3d2-7298df8aed32
+
+on mobile:
+
+https://github.com/user-attachments/assets/db9d9307-80d9-45b1-893d-dd1f7ac596b6

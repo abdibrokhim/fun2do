@@ -121,6 +121,13 @@ struct MainCanvasView: View {
                     }
                 }
             }
+            // Modal for editing details.
+            .sheet(item: $selectedNodeForDetail) { nodeBinding in
+                // Pass a binding to the selected node.
+                if let index = nodes.firstIndex(where: { $0.id == nodeBinding.id }) {
+                    TodoDetailView(node: $nodes[index])
+                }
+            }
             // Alerts.
             .alert(isPresented: $showNoParentAlert) {
                 Alert(title: Text("No Parent Selected"),
@@ -138,7 +145,7 @@ struct MainCanvasView: View {
                     let genesisNode = Node(title: "Genesis Brain",
                                            type: .genesis,
                                            position: genesisPosition,
-                                           color: UIColor.purple)
+                                           color: UIColor.black)
                     nodes.append(genesisNode)
                 }
             }
