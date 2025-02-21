@@ -1,11 +1,11 @@
 import SwiftUI
 
 struct MainCanvasView: View { 
+    @Binding var showDropdown: Bool
+    
     @State private var nodes: [Node] = [] 
     @State private var connections: [Connection] = []
     
-    // Dropdown and modal control.
-    @State private var showDropdown = false
     @State private var showParentModal = false
     @State private var showChildModal = false
     @State private var showNoParentAlert = false
@@ -23,13 +23,9 @@ struct MainCanvasView: View {
     var body: some View {
         GeometryReader { geometry in
             let canvasSize = geometry.size
-            ZStack {
-                Color(UIColor.systemGray6)
-                    .edgesIgnoringSafeArea(.all)
-                    // Using double-tap as a placeholder.
-                    .onTapGesture(count: 2) {
-                        withAnimation { showDropdown.toggle() }
-                    }
+                ZStack {
+                    // Background: use Infinite or Static tiled map.
+                    StaticTiledMapView()
                 
                 // Render connection curves.
                 ForEach(connections) { connection in

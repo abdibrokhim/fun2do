@@ -28,3 +28,7 @@ https://github.com/user-attachments/assets/697d3d40-fc18-4d68-a3d2-7298df8aed32
 on mobile:
 
 https://github.com/user-attachments/assets/db9d9307-80d9-45b1-893d-dd1f7ac596b6
+
+map added.. lol
+
+https://github.com/user-attachments/assets/473f45e6-b252-46a7-b60e-877b1267a035

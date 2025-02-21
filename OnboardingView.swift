@@ -2,11 +2,19 @@ import SwiftUI
 
 struct OnboardingView: View { 
     @State private var showMain = false
+    @State private var showDropdown = false
+    
     var body: some View {
         Group {
             if showMain {
-                ZoomableView {
-                    MainCanvasView()
+                ZoomablePannableMapView(
+                    onDoubleTap: {
+                        withAnimation {
+                            showDropdown.toggle()
+                        }
+                    }
+                ) {
+                    MainCanvasView(showDropdown: $showDropdown)
                 }
             } else {
                 VStack(spacing: 20) {
