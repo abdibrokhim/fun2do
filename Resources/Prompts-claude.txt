@@ -1,3 +1,7 @@
+----------
+used Claude 3.5 Sonnet
+----------
+
 
 How to make it super smooth?------
 <code_snippet>

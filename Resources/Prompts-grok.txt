@@ -1,3 +1,6 @@
+----------
+used Grok 3
+----------
 
 Please fix the following code snippet. Currently gesture , zoom in and out working pretty wierd and not ux friendly . if i drag from one place to another its moving not smoothly and also moving long distances at a time.
 
