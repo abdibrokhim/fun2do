@@ -14,7 +14,7 @@ struct NodeView: View {
     
     // Node size: 120 for parent; 80 for others.
     var size: CGFloat {
-        (node.type == .genesis) ? 160 : (node.type == .parent) ? 120 : 80
+        (node.type == .genesis) ? 60 : (node.type == .parent) ? 40 : 20
     }
     
     var body: some View {
@@ -56,7 +56,7 @@ struct NodeView: View {
                 }
             }
         )
-        .onTapGesture(count: 2) {
+        .onTapGesture(count: 1) {
             // Double tap: show editable detail modal.
             onDoubleTap?(node)
         }

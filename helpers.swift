@@ -2,7 +2,7 @@ import SwiftUI
 
 func dotOffset(for nodeType: NodeType, dot: DotPosition) -> CGPoint {
     // Node size depends on whether it's a parent or child.
-    let size: CGFloat = (nodeType == .parent) ? 120 : 80
+    let size: CGFloat = (nodeType == .genesis) ? 60 : (nodeType == .parent) ? 40 : 20
     
     switch dot {
     case .top:
@@ -29,7 +29,7 @@ func dotGlobalPosition(node: Node, dot: DotPosition) -> CGPoint {
 /// from the node’s center to that dot.
 func localDotOffset(nodeType: NodeType, dot: DotPosition) -> CGPoint {
     // Use the same size as the node’s drawn diameter.
-    let size: CGFloat = (nodeType == .parent) ? 120 : 80
+    let size: CGFloat = (nodeType == .genesis) ? 60 : (nodeType == .parent) ? 40 : 20
     switch dot {
     case .top:
         return CGPoint(x: 0, y: -size/2)

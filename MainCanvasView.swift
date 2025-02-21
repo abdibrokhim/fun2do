@@ -86,13 +86,20 @@ struct MainCanvasView: View {
                                 .background(Color.green)
                                 .foregroundColor(.white)
                                 .cornerRadius(8)
+                                
+                                Button("Exit") {
+                                    showDropdown = false
+                                }
+                                .padding()
+                                .background(Color.gray)
+                                .foregroundColor(.white)
+                                .cornerRadius(8)
                             }
                             .padding()
                             Spacer()
                         }
                         Spacer()
                     }
-                    .background(Color.black.opacity(0.4).edgesIgnoringSafeArea(.all))
                 }
             }
             // Present modals.

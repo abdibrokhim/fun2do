@@ -86,14 +86,14 @@ struct ZoomablePannableMapView<Content: View>: View {
                     TapGesture(count: 2)
                         .onEnded {
                             withAnimation(.easeInOut(duration: animationDuration)) {
-                                if currentScale > minScale * 1.2 {
-                                    // Reset to default
-                                    currentScale = minScale
-                                    panOffset = .zero
-                                } else {
-                                    // Zoom in
-                                    currentScale = min(currentScale * 2, maxScale)
-                                }
+//                                if currentScale > minScale * 1.2 {
+//                                    // Reset to default
+//                                    currentScale = minScale
+//                                    panOffset = .zero
+//                                } else {
+//                                    // Zoom in
+//                                    currentScale = min(currentScale * 2, maxScale)
+//                                }
                                 onDoubleTap?()
                             }
                         }

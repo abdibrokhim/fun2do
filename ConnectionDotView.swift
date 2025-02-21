@@ -11,7 +11,7 @@ struct ConnectionDotView: View {
     var body: some View {
         // The node’s drawn size:
         var size: CGFloat {
-            (node.type == .genesis) ? 160 : (node.type == .parent) ? 120 : 80
+            (node.type == .genesis) ? 60 : (node.type == .parent) ? 40 : 20
         }
         // In the node’s local coordinate space, the center is at (size/2, size/2)
         // The dot’s offset from center is given by localDotOffset.
